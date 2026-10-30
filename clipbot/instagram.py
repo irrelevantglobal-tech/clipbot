@@ -1,4 +1,4 @@
-"""Post approved Shorts to Instagram as Reels, through Meta's Instagram API (Instagram Login).
+"""Post approved Shorts to Instagram as Reels (and the same clip as a Story), through Meta's Instagram API (Instagram Login).
 
     python -m clipbot.instagram         (IG_DRY=1: everything except the final media_publish)
 
@@ -110,11 +110,11 @@ def park(path):
                        headers={"Authorization": "Bearer " + common.env("CLIPBOT_TOKEN"), "Content-Type": "application/octet-stream"})
 
 
-def post_reel(tok, path, caption, dry):
+def post_video(tok, path, params, dry):
+    """Park the mp4, make a container (Reel or Story), wait for Meta to process it, publish. Dry = stop before publish."""
     parked = park(path)
     try:
-        c = graph(f"/{tok['user_id']}/media", tok["token"], {"media_type": "REELS", "video_url": parked["url"],
-                                                              "caption": caption, "share_to_feed": "true"}, post=True)
+        c = graph(f"/{tok['user_id']}/media", tok["token"], dict(params, video_url=parked["url"]), post=True)
         cid = c["id"]
         end = time.time() + 900
         status = ""
@@ -139,6 +139,25 @@ def post_reel(tok, path, caption, dry):
     finally:
         try:
             common.worker(f"/clipbot/igfile?key={parked['key']}", method="DELETE")
+        except Exception:
+            pass
+
+
+def post_reel(tok, path, caption, dry):
+    return post_video(tok, path, {"media_type": "REELS", "caption": caption, "share_to_feed": "true"}, dry)
+
+
+def post_story(tok, it, path, dry):
+    """Leon 2026-10-30: every new Reel also goes out as a Story for reach. Clips are <= 58 s, inside the Story
+    limit. Tried once, right after its Reel: a failed Story is reported, never retried (no double Stories),
+    and never fails the Reel."""
+    try:
+        sid, _ = post_video(tok, path, {"media_type": "STORIES"}, dry)
+        print(f"{it['id']}: " + ("DRY, Story container FINISHED, not published" if sid is None else f"Story {sid}"))
+    except Exception as e:
+        print(f"{it['id']}: Story FAILED {str(e)[:300]}")
+        try:
+            common.worker("/clipbot/failed", {"id": f"Story {it['id']}", "error": "Reel is up, Story was not posted: " + str(e)[:250]})
         except Exception:
             pass
 
@@ -185,11 +204,13 @@ def main():
             mid, link = post_reel(tok, path, caption, dry)
             if mid is None:
                 print(f"{it['id']}: DRY, container FINISHED, not published. caption={json.dumps(caption, ensure_ascii=False)[:300]}")
+                post_story(tok, it, path, dry)
                 continue
             posted += 1
             recent.insert(0, {"id": mid, "caption": caption, "permalink": link})
             print(f"{it['id']}: Reel {mid} {link}")
             common.worker("/clipbot/igdone", {"id": it["id"], "media_id": mid, "url": link})
+            post_story(tok, it, path, dry)
         except Exception as e:
             failed += 1
             print(f"{it['id']}: FAILED {str(e)[:300]}")

@@ -82,8 +82,8 @@ class ReelsTest(unittest.TestCase):
         done = [c[2]["id"] for c in f.calls if c[1] == "/clipbot/igdone"]
         self.assertEqual(done, ["vod:1:2", "vod:1:1"])          # 4 is in the future, 3 waits for the next run
         pub = [c for c in f.calls if c[0] == "http" and c[1].endswith("media_publish")]
-        self.assertEqual(len(pub), 2)
-        self.assertEqual(pub[0][3], 0, "media_publish is never retried")
+        self.assertEqual(len(pub), 4)                            # 2 Reels + their 2 Stories
+        self.assertTrue(all(c[3] == 0 for c in pub), "media_publish is never retried")
         self.assertTrue(any(c[1] == "/clipbot/igfile?key=" + "k" * 32 and c[3] == "DELETE" for c in f.calls))
 
     def test_caption_twitch_line_no_filler_tags_and_token_not_in_urls(self):
@@ -149,6 +149,41 @@ class ReelsTest(unittest.TestCase):
         self.run_main(f, dry="1")
         self.assertFalse(any(c[1].endswith("media_publish") for c in f.calls if c[0] == "http"))
         self.assertFalse(any(c[1] == "/clipbot/igdone" for c in f.calls))
+
+    def test_each_new_reel_also_goes_out_as_a_story(self):
+        f = Fake([item(1, 1)])
+        self.run_main(f)
+        made = [c[2].decode() for c in f.calls if c[0] == "http" and c[1].endswith("/42/media") and c[2]]
+        self.assertEqual(len(made), 2)
+        self.assertIn("media_type=REELS", made[0])
+        self.assertIn("media_type=STORIES", made[1])
+        self.assertNotIn("caption=", made[1])
+        names = [c[1] for c in f.calls]
+        self.assertLess(names.index("/clipbot/igdone"), len(names) - 1 - names[::-1].index("/clipbot/igfile?key=" + "k" * 32),
+                        "the Reel is recorded done before the Story is attempted")
+
+    def test_failed_story_is_reported_and_never_fails_the_reel(self):
+        f = Fake([item(1, 1)])
+        real = f.http
+        n = {"media": 0}
+
+        def http(url, data=None, **kw):
+            if url.endswith("/42/media") and data:
+                n["media"] += 1
+                if n["media"] == 2:
+                    raise RuntimeError("HTTP 400 story rejected")
+            return real(url, data, **kw)
+        f.http = http
+        self.run_main(f)                                         # no SystemExit
+        self.assertEqual(next(c[2] for c in f.calls if c[1] == "/clipbot/igdone")["media_id"], "M1")
+        fail = next(c[2] for c in f.calls if c[1] == "/clipbot/failed")
+        self.assertEqual(fail["id"], "Story vod:1:1")
+
+    def test_duplicate_reel_gets_no_story(self):
+        cap = instagram.caption_for(item(1, 1))
+        f = Fake([item(1, 1)], recent=[{"id": "OLD", "caption": cap, "permalink": "p"}])
+        self.run_main(f)
+        self.assertFalse(any(c[0] == "http" and c[1].endswith("/42/media") and c[2] for c in f.calls))
 
     def test_no_login_does_nothing(self):
         f = Fake([item(1, 1)], login=False)
