@@ -11,6 +11,7 @@ on:
       max:
         description: "only try this many Shorts (blank = all)"
         default: ""
+  # Times are UTC. Re-pushed 2026-10-30: schedules stopped firing after the repo went public.
   schedule:
     - cron: "40 7 * * *"
     - cron: "40 18 * * *"

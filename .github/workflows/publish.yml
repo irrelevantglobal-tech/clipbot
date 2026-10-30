@@ -10,6 +10,7 @@ on:
       who:
         description: whose approved clips (leon = TwinkiesGhost, glatiar = Titan)
         default: leon
+  # Times are UTC. Re-pushed 2026-10-30: schedules stopped firing after the repo went public.
   schedule:
     - cron: "17 6 * * *"
     - cron: "17 17 * * *"
