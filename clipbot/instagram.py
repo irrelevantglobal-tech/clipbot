@@ -21,7 +21,7 @@ import time
 import urllib.parse
 from datetime import datetime, timedelta
 
-from . import common, publish, tiktok
+from . import common, publish, render, tiktok
 
 GRAPH = "https://graph.instagram.com/v26.0"   # replaced by the host stored with the token
 MAX_PER_RUN = 2                       # never dump a backlog: the next cron run takes the rest
@@ -95,8 +95,11 @@ def small_enough(path, work):
     if os.path.getsize(path) <= MAX_BYTES:
         return path
     out = os.path.join(work, os.path.basename(path).replace(".mp4", "-ig.mp4"))
+    # 2026-10-30: crf 24 + 6M cap still gave 32 MB on a busy clip, so cap the bitrate from the length
+    # (90% of the limit, minus audio). Clips are <= 58 s, so this stays around 3 Mbps or more.
+    kbps = max(int(MAX_BYTES * 8 * 0.9 / max(render.duration(path), 1) / 1000) - 128, 800)
     subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", path, "-c:v", "libx264", "-preset", "medium",
-                    "-crf", "24", "-maxrate", "6M", "-bufsize", "12M", "-c:a", "aac", "-b:a", "128k",
+                    "-crf", "24", "-maxrate", f"{kbps}k", "-bufsize", f"{kbps * 2}k", "-c:a", "aac", "-b:a", "128k",
                     "-movflags", "+faststart", out], check=True)
     if os.path.getsize(out) > MAX_BYTES:
         raise RuntimeError(f"clip is {os.path.getsize(out) >> 20} MB even re-encoded")
