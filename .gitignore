@@ -1,0 +1,9 @@
+out/
+work/
+__pycache__/
+*.part.mp4
+.env
+*token*.json
+*client_secret*
+*.token
+.secrets/

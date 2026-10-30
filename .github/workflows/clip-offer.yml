@@ -1,0 +1,65 @@
+# Started by the Forge worker when new Twitch clips appear. Renders them and asks Leon in
+# Discord. Uploads nothing: publish.yml only takes clips he approved.
+name: clip-offer
+on:
+  workflow_dispatch:
+    inputs:
+      clips:
+        description: Comma-separated Twitch clip ids (max 10)
+        required: true
+      who:
+        description: whose clips (leon = TwinkiesGhost, glatiar = Titan)
+        default: leon
+permissions:
+  contents: write   # clips are kept as a GitHub Release (artifacts hit the 0.5 GB quota 2026-10-28)
+jobs:
+  offer:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      CLIPBOT_ZIP_KEY: ${{ secrets.CLIPBOT_ZIP_KEY }}   # clip zips + debug files are encrypted (public repo)
+      CLIPS: ${{ inputs.clips }}
+      CLIPBOT_WHO: ${{ inputs.who || 'leon' }}
+      TWITCH_CLIENT_ID: ${{ secrets.TWITCH_CLIENT_ID }}
+      TWITCH_CLIENT_SECRET: ${{ secrets.TWITCH_CLIENT_SECRET }}
+      CLIPBOT_TOKEN: ${{ secrets.CLIPBOT_TOKEN }}
+    steps:
+      - name: Check input
+        run: '[[ "$CLIPS" =~ ^[A-Za-z0-9_,-]{5,1300}$ && "$CLIPBOT_WHO" =~ ^(leon|glatiar)$ ]] || { echo "bad clip ids / who"; exit 1; }'
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+      - run: pip install -q -r requirements.txt
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: whisper-base.en-small.en-v1
+      - name: Render clips + write copy
+        id: r
+        run: python -m clipbot.twitch_clips --clips "$CLIPS" --out out
+      - name: Keep the clips for publish (GitHub Release, not artifact storage)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BATCH: ${{ steps.r.outputs.batch }}
+        run: |
+          NAME="clips-$BATCH"; [ "$CLIPBOT_WHO" = leon ] || NAME="clips-$CLIPBOT_WHO-$BATCH"   # = common.release_name
+          (cd out && shopt -s nullglob && f=(clip*.mp4 raw*.mp4 manifest.json) && zip -0 -q "../$NAME.zip" "${f[@]}")
+          [ -n "$CLIPBOT_ZIP_KEY" ] || { echo "CLIPBOT_ZIP_KEY missing: refusing to upload unencrypted clips"; exit 1; }
+          openssl enc -aes-256-cbc -pbkdf2 -iter 200000 -salt -pass env:CLIPBOT_ZIP_KEY -in "$NAME.zip" -out "$NAME.zip.enc"   # public repo: clips stay private
+          if gh release view "$NAME" >/dev/null 2>&1; then
+            gh release upload "$NAME" "$NAME.zip.enc" --clobber
+          else
+            gh release create "$NAME" "$NAME.zip.enc" --title "$NAME" --notes "ClipBot run $GITHUB_RUN_ID. Deleted by publish.yml after 30 days."
+          fi
+      - name: Send to Discord for approval
+        run: python -m clipbot.offer --out out --run-id "$GITHUB_RUN_ID"
+      - name: Tell Leon it failed
+        if: failure()
+        run: |
+          W=leon; [[ "$CLIPBOT_WHO" =~ ^(leon|glatiar)$ ]] && W=$CLIPBOT_WHO   # another person's failure goes to his own channel
+          curl -s -X POST -A "TwinkiesGhost-ClipBot/1.0" -H "Authorization: Bearer $CLIPBOT_TOKEN" -H "Content-Type: application/json" \
+            -d "{\"id\":\"twitch clips job\",\"who\":\"$W\",\"error\":\"GitHub run $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID failed\"}" \
+            https://irrelevant-forge.irrelevantforge.workers.dev/clipbot/failed || true

@@ -1,0 +1,125 @@
+# GTA 6 marathon lane: cut long-form episodes out of a Twitch VOD window (clipbot/episodes.py).
+# Started by hand (tests) or by the Forge worker's rolling mode once Leon switches it on.
+# upload=false never touches YouTube. upload=true uploads PRIVATE with no schedule; approval
+# in Discord sets the date. Nothing here can make a video public.
+name: episodes
+on:
+  workflow_dispatch:
+    inputs:
+      vod:
+        description: Twitch VOD id
+        required: true
+      from:
+        description: window start (VOD seconds)
+        default: "0"
+      to:
+        description: window end (VOD seconds, 0 = end)
+        default: "0"
+      final:
+        description: the VOD has ended (emit the tail too)
+        type: boolean
+        default: false
+      series:
+        description: series name in titles
+        default: GTA 6
+      max_episodes:
+        description: test only, cut the first N (0 = all)
+        default: "0"
+      upload:
+        description: upload PRIVATE (no schedule)
+        type: boolean
+        default: false
+      offer:
+        description: send uploaded episodes to Discord for approval (off for tests)
+        type: boolean
+        default: true
+      plan_only:
+        description: stop after planning
+        type: boolean
+        default: false
+concurrency:
+  group: episodes-${{ inputs.vod }}
+  cancel-in-progress: false
+permissions:
+  contents: read
+jobs:
+  cut:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    env:
+      CLIPBOT_ZIP_KEY: ${{ secrets.CLIPBOT_ZIP_KEY }}   # clip zips + debug files are encrypted (public repo)
+      VOD: ${{ inputs.vod }}
+      FROM: ${{ inputs.from }}
+      TO: ${{ inputs.to }}
+      SERIES: ${{ inputs.series }}
+      MAXEP: ${{ inputs.max_episodes }}
+      PYTHONUNBUFFERED: "1"
+      TWITCH_CLIENT_ID: ${{ secrets.TWITCH_CLIENT_ID }}
+      TWITCH_CLIENT_SECRET: ${{ secrets.TWITCH_CLIENT_SECRET }}
+      CLIPBOT_TOKEN: ${{ secrets.CLIPBOT_TOKEN }}
+      YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
+      YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
+      YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
+    steps:
+      - name: Check input
+        run: |
+          [[ "$VOD" =~ ^[0-9]{6,14}$ ]] || { echo "bad vod id"; exit 1; }
+          [[ "$FROM" =~ ^[0-9]+(\.[0-9]+)?$ && "$TO" =~ ^[0-9]+(\.[0-9]+)?$ && "$MAXEP" =~ ^[0-9]+$ ]] || { echo "bad numbers"; exit 1; }
+          [[ "$SERIES" =~ ^[A-Za-z0-9\ :\'-]{2,40}$ ]] || { echo "bad series"; exit 1; }
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+      - run: pip install -q -r requirements.txt
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: whisper-base.en-small.en-v1
+      - name: Cut episodes
+        run: |
+          args=(--vod "$VOD" --out out --from "$FROM" --to "$TO" --series "$SERIES" --max-episodes "$MAXEP")
+          [[ "${{ inputs.final }}" == "true" ]] && args+=(--final)
+          [[ "${{ inputs.upload }}" == "true" ]] && args+=(--upload)
+          [[ "${{ inputs.plan_only }}" == "true" ]] && args+=(--plan-only)
+          python -m clipbot.episodes "${args[@]}"
+      - name: Send uploaded episodes for approval
+        # Also after a failure: whatever WAS uploaded gets its card, but the window is not marked done
+        # (partial), so the worker retries it later and episodes.py skips what is already on YouTube.
+        if: always() && inputs.upload && inputs.offer
+        env:
+          PARTIAL: ${{ job.status != 'success' }}
+        run: |
+          [[ -f out/episodes.json ]] || { echo "no manifest"; exit 0; }
+          python - <<'PY'
+          import json, os
+          from clipbot import common
+          m = json.load(open("out/episodes.json", encoding="utf-8"))
+          m["run_id"] = os.environ["GITHUB_RUN_ID"]
+          if os.environ.get("PARTIAL") == "true":
+              m["partial"] = True
+              m.pop("next_from", None)
+              m["final"] = False
+          print(common.worker("/clipbot/epoffer", m))
+          PY
+      - name: Encrypt the debug files (the repo is public)
+        if: always()
+        run: |
+          shopt -s nullglob; f=(out/episodes.json out/ep*_joins.mp4 out/window_motion.json); [ ${#f[@]} -gt 0 ] && [ -n "$CLIPBOT_ZIP_KEY" ] || exit 0
+          zip -0 -q -j episodes-debug.zip "${f[@]}"
+          openssl enc -aes-256-cbc -pbkdf2 -iter 200000 -salt -pass env:CLIPBOT_ZIP_KEY -in episodes-debug.zip -out episodes-debug.zip.enc && rm episodes-debug.zip
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: episodes-${{ inputs.vod }}-${{ inputs.from }}
+          path: episodes-debug.zip.enc
+          if-no-files-found: ignore
+          retention-days: 7
+          compression-level: 0
+      - name: Tell Leon it failed
+        if: failure()
+        run: |
+          curl -s -X POST -H "Authorization: Bearer $CLIPBOT_TOKEN" -H "Content-Type: application/json" \
+            -A "TwinkiesGhost-ClipBot/1.0" -d "{\"id\":\"episodes $VOD from $FROM\",\"error\":\"GitHub run $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID failed\"}" \
+            https://irrelevant-forge.irrelevantforge.workers.dev/clipbot/failed || true

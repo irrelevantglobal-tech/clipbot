@@ -1,0 +1,73 @@
+# Schedules the Shorts publish.py put on YouTube onto TikTok too, at the same slots, through TikTok
+# Studio in a headless browser (Leon's login in the TIKTOK_STATE secret, saved by tiktok_login.py).
+# Runs after every publish run and twice a day; each run only touches slots within 26 h.
+name: tiktok
+on:
+  workflow_dispatch:
+    inputs:
+      dry:
+        description: "1 = do everything except send the final Schedule request"
+        default: "0"
+      max:
+        description: "only try this many Shorts (blank = all)"
+        default: ""
+  schedule:
+    - cron: "40 7 * * *"
+    - cron: "40 18 * * *"
+  workflow_run:
+    workflows: [publish]
+    types: [completed]
+concurrency:
+  group: tiktok
+  cancel-in-progress: false
+permissions:
+  contents: read
+  actions: read
+jobs:
+  tiktok:
+    runs-on: ubuntu-24.04  # Playwright 1.55 has no chromium build for ubuntu-latest (26.04)
+    timeout-minutes: 120
+    env:
+      CLIPBOT_ZIP_KEY: ${{ secrets.CLIPBOT_ZIP_KEY }}   # clip zips + debug files are encrypted (public repo)
+      CLIPBOT_TOKEN: ${{ secrets.CLIPBOT_TOKEN }}
+      TIKTOK_STATE: ${{ secrets.TIKTOK_STATE }}
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      TT_DRY: ${{ inputs.dry || '0' }}
+      TT_MAX: ${{ inputs.max }}
+      PYTHONUNBUFFERED: "1"
+    steps:
+      - name: Anything waiting?
+        id: q
+        run: |
+          [ -n "$TIKTOK_STATE" ] || { echo "no TikTok login saved yet"; echo "n=0" >> "$GITHUB_OUTPUT"; exit 0; }
+          n=$(curl -sf -A clipbot -H "Authorization: Bearer $CLIPBOT_TOKEN" https://irrelevant-forge.irrelevantforge.workers.dev/clipbot/ttqueue | python3 -c "import sys,json;print(len(json.load(sys.stdin)['items']))")
+          echo "waiting: $n"; echo "n=$n" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+        if: steps.q.outputs.n != '0'
+      - uses: actions/setup-python@v5
+        if: steps.q.outputs.n != '0'
+        with:
+          python-version: "3.12"
+          cache: pip
+      - if: steps.q.outputs.n != '0'
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+          pip install -q -r requirements.txt playwright==1.55.0
+          python -m playwright install --with-deps chromium
+      - name: Schedule on TikTok
+        if: steps.q.outputs.n != '0'
+        run: python -m clipbot.tiktok
+      - name: Encrypt the screenshots (they show his TikTok Studio; the repo is public)
+        if: always() && steps.q.outputs.n != '0'
+        run: |
+          shopt -s nullglob; f=(work/*.png); [ ${#f[@]} -gt 0 ] && [ -n "$CLIPBOT_ZIP_KEY" ] || exit 0
+          zip -q -j screens.zip "${f[@]}" && rm -f "${f[@]}"
+          openssl enc -aes-256-cbc -pbkdf2 -iter 200000 -salt -pass env:CLIPBOT_ZIP_KEY -in screens.zip -out screens.zip.enc && rm screens.zip
+      - uses: actions/upload-artifact@v4
+        if: always() && steps.q.outputs.n != '0'
+        continue-on-error: true   # a full Actions storage quota must not fail the run
+        with:
+          name: tiktok-screens-${{ github.run_id }}
+          path: screens.zip.enc
+          if-no-files-found: ignore
+          retention-days: 3

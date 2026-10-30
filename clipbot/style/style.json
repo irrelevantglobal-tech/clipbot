@@ -1,0 +1,14 @@
+{
+  "_picked": "Leon 2026-10-22: Shorts = B neon; end card kept as rendered; thumbnails: A sunset for ALL episode series, B neon for highlight compilations. Thumbnail look APPROVED 10-22 in its calm version (game is the hero), after he called the first mock too loud.",
+  "shorts_theme": "neon",
+  "cover_variant": "neon",
+  "end_card": {
+    "line1": "MORE ON THE STREAM",
+    "url": "TWITCH.TV/TWINKIESGHOST"
+  },
+  "thumb_variant_default": "sunset",
+  "thumb_variant_by_kind": {
+    "episode": "sunset",
+    "highlights": "neon"
+  }
+}

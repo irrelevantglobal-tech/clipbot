@@ -1,0 +1,52 @@
+# Posts the Shorts publish.py scheduled on YouTube to Instagram as Reels once their slot has passed
+# (Instagram's API cannot schedule). Runs just after every slot hour (10/13/18/21 UK, both GMT and BST).
+name: instagram
+on:
+  workflow_dispatch:
+    inputs:
+      dry:
+        description: "1 = do everything except the final publish"
+        default: "0"
+  schedule:
+    - cron: "5 9,10,12,13,17,18,20,21 * * *"
+concurrency:
+  group: instagram
+  cancel-in-progress: false
+permissions:
+  contents: read
+  actions: read
+jobs:
+  instagram:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      CLIPBOT_ZIP_KEY: ${{ secrets.CLIPBOT_ZIP_KEY }}   # clip zips + debug files are encrypted (public repo)
+      CLIPBOT_TOKEN: ${{ secrets.CLIPBOT_TOKEN }}
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      IG_DRY: ${{ inputs.dry || '0' }}
+      PYTHONUNBUFFERED: "1"
+    steps:
+      - name: Anything due?
+        id: q
+        run: |
+          n=$(curl -sf -A clipbot -H "Authorization: Bearer $CLIPBOT_TOKEN" https://irrelevant-forge.irrelevantforge.workers.dev/clipbot/igqueue | python3 -c "
+          import sys, json, datetime
+          q = json.load(sys.stdin)
+          now = datetime.datetime.now(datetime.timezone.utc)
+          due = [i for i in q['items'] if datetime.datetime.fromisoformat(i['at'].replace('Z', '+00:00')) <= now]
+          print(len(due) if q.get('login') else 0)")
+          echo "due: $n"; echo "n=$n" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+        if: steps.q.outputs.n != '0'
+      - uses: actions/setup-python@v5
+        if: steps.q.outputs.n != '0'
+        with:
+          python-version: "3.12"
+          cache: pip
+      - if: steps.q.outputs.n != '0'
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+          pip install -q -r requirements.txt
+      - name: Post Reels
+        if: steps.q.outputs.n != '0'
+        run: python -m clipbot.instagram

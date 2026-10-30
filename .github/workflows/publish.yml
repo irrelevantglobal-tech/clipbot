@@ -1,0 +1,93 @@
+# Moves approved clips onto YouTube as Scheduled, but only once their slot is within 24 h (no
+# backlog dump). Started by the worker on approval; the twice-daily runs release held clips.
+# One job per person (2026-10-29, Titan's lane): a dispatch names one (`who`, default leon), the
+# schedule runs both. Each job only ever sees its OWN person's YouTube secrets: Leon's YT_*, Titan's
+# GLAT_YT_*. No fallback between them, and publish.py's channel gate refuses any other channel.
+name: publish
+on:
+  workflow_dispatch:
+    inputs:
+      who:
+        description: whose approved clips (leon = TwinkiesGhost, glatiar = Titan)
+        default: leon
+  schedule:
+    - cron: "17 6 * * *"
+    - cron: "17 17 * * *"
+permissions:
+  contents: write   # deletes clip releases older than 30 days
+  actions: read
+jobs:
+  publish:
+    strategy:
+      fail-fast: false
+      matrix:
+        who: ${{ fromJSON(github.event_name == 'schedule' && '["leon","glatiar"]' || format('["{0}"]', inputs.who || 'leon')) }}
+    concurrency:
+      group: ${{ matrix.who == 'leon' && 'publish' || format('publish-{0}', matrix.who) }}
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      CLIPBOT_ZIP_KEY: ${{ secrets.CLIPBOT_ZIP_KEY }}   # clip zips + debug files are encrypted (public repo)
+      CLIPBOT_WHO: ${{ matrix.who }}
+      CLIPBOT_TOKEN: ${{ secrets.CLIPBOT_TOKEN }}
+      TWITCH_CLIENT_ID: ${{ secrets.TWITCH_CLIENT_ID }}
+      TWITCH_CLIENT_SECRET: ${{ secrets.TWITCH_CLIENT_SECRET }}
+      YT_CLIENT_ID: ${{ matrix.who == 'leon' && secrets.YT_CLIENT_ID || '' }}
+      YT_CLIENT_SECRET: ${{ matrix.who == 'leon' && secrets.YT_CLIENT_SECRET || '' }}
+      YT_REFRESH_TOKEN: ${{ matrix.who == 'leon' && secrets.YT_REFRESH_TOKEN || '' }}
+      GLAT_YT_CLIENT_ID: ${{ matrix.who == 'glatiar' && secrets.GLAT_YT_CLIENT_ID || '' }}
+      GLAT_YT_CLIENT_SECRET: ${{ matrix.who == 'glatiar' && secrets.GLAT_YT_CLIENT_SECRET || '' }}
+      GLAT_YT_REFRESH_TOKEN: ${{ matrix.who == 'glatiar' && secrets.GLAT_YT_REFRESH_TOKEN || '' }}
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      EP_PLAYLIST: ${{ vars.EP_PLAYLIST }}
+    steps:
+      - name: Anything to do?
+        id: q
+        run: |
+          [[ "$CLIPBOT_WHO" =~ ^(leon|glatiar)$ ]] || { echo "bad who"; exit 1; }
+          if [ "$CLIPBOT_WHO" = leon ]; then QS=""; else QS="?who=$CLIPBOT_WHO"; fi
+          # a queue that is not this person's counts as 0: an older worker ignores ?who and returns LEON's
+          n=$(curl -sf -H "Authorization: Bearer $CLIPBOT_TOKEN" "https://irrelevant-forge.irrelevantforge.workers.dev/clipbot/queue$QS" | python3 -c "import sys,os,json
+          j=json.load(sys.stdin); w=os.environ['CLIPBOT_WHO']
+          print(len([i for i in j['items'] if i.get('who','leon')==w]) if j.get('who','leon')==w else 0)")
+          e=0
+          if [ "$CLIPBOT_WHO" = leon ]; then
+          # approved episodes (GTA 6 lane, Leon only); the route 404s until the worker has it, which counts as 0
+          e=$(curl -s -H "Authorization: Bearer $CLIPBOT_TOKEN" https://irrelevant-forge.irrelevantforge.workers.dev/clipbot/eplist | python3 -c "import sys,json
+          try: print(sum(1 for i in json.load(sys.stdin)['items'] if i.get('status')=='approved'))
+          except Exception: print(0)")
+          fi
+          echo "$CLIPBOT_WHO queued: $n  approved episodes: $e"; echo "n=$n" >> "$GITHUB_OUTPUT"; echo "e=$e" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+        if: steps.q.outputs.n != '0' || steps.q.outputs.e != '0'
+      - uses: actions/setup-python@v5
+        if: steps.q.outputs.n != '0' || steps.q.outputs.e != '0'
+        with:
+          python-version: "3.12"
+          cache: pip
+      - if: steps.q.outputs.n != '0' || steps.q.outputs.e != '0'
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg && pip install -q -r requirements.txt
+      - uses: actions/cache@v4
+        if: steps.q.outputs.n != '0' || steps.q.outputs.e != '0'
+        with:
+          path: ~/.cache/huggingface
+          key: whisper-base.en-small.en-v1
+      - name: Upload + schedule
+        if: steps.q.outputs.n != '0'
+        run: python -m clipbot.publish
+      - name: Schedule approved episodes
+        if: steps.q.outputs.e != '0' && matrix.who == 'leon'
+        run: python -m clipbot.ep_publish
+      - name: Delete clip releases older than 30 days (their Discord offers have expired)
+        if: always() && matrix.who == 'leon'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cutoff=$(date -u -d '30 days ago' +%s)
+          gh release list --repo "$GITHUB_REPOSITORY" --limit 200 --json tagName,createdAt             -q '.[] | select(.tagName | startswith("clips-")) | [.tagName, .createdAt] | @tsv' |
+          while read -r tag at; do
+            if [ "$(date -u -d "$at" +%s)" -lt "$cutoff" ]; then
+              echo "deleting $tag ($at)"; gh release delete "$tag" --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag
+            fi
+          done
