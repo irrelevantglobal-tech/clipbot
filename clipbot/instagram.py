@@ -113,37 +113,84 @@ def park(path):
                        headers={"Authorization": "Bearer " + common.env("CLIPBOT_TOKEN"), "Content-Type": "application/octet-stream"})
 
 
+def wait_finished(tok, cid):
+    end = time.time() + 900
+    status = ""
+    while time.time() < end:
+        status = graph(f"/{cid}", tok["token"], {"fields": "status_code,status"}).get("status_code", "")
+        if status == "FINISHED":
+            return
+        if status in ("ERROR", "EXPIRED"):
+            raise RuntimeError(f"Instagram could not process the video ({status})")
+        time.sleep(20)
+    raise RuntimeError(f"Instagram still processing after 15 min ({status})")
+
+
+def publish_container(tok, cid):
+    m = graph(f"/{tok['user_id']}/media_publish", tok["token"], {"creation_id": cid}, post=True, retries=0)
+    link = ""
+    try:
+        link = graph(f"/{m['id']}", tok["token"], {"fields": "permalink"}).get("permalink", "")
+    except Exception:
+        pass
+    return m["id"], link
+
+
+def unpark(parked):
+    for p in parked:
+        try:
+            common.worker(f"/clipbot/igfile?key={p['key']}", method="DELETE")
+        except Exception:
+            pass
+
+
 def post_video(tok, path, params, dry):
     """Park the mp4, make a container (Reel or Story), wait for Meta to process it, publish. Dry = stop before publish."""
     parked = park(path)
     try:
         c = graph(f"/{tok['user_id']}/media", tok["token"], dict(params, video_url=parked["url"]), post=True)
-        cid = c["id"]
-        end = time.time() + 900
-        status = ""
-        while time.time() < end:
-            status = graph(f"/{cid}", tok["token"], {"fields": "status_code,status"}).get("status_code", "")
-            if status == "FINISHED":
-                break
-            if status in ("ERROR", "EXPIRED"):
-                raise RuntimeError(f"Instagram could not process the video ({status})")
-            time.sleep(20)
-        if status != "FINISHED":
-            raise RuntimeError(f"Instagram still processing after 15 min ({status})")
+        wait_finished(tok, c["id"])
         if dry:
             return None, None
-        m = graph(f"/{tok['user_id']}/media_publish", tok["token"], {"creation_id": cid}, post=True, retries=0)
-        link = ""
-        try:
-            link = graph(f"/{m['id']}", tok["token"], {"fields": "permalink"}).get("permalink", "")
-        except Exception:
-            pass
-        return m["id"], link
+        return publish_container(tok, c["id"])
     finally:
+        unpark([parked])
+
+
+def post_carousel(tok, it, work, dry):
+    """Leon 2026-10-31 ("Add a post too"): a hand-booked item can also go out as a normal swipe post. The API makes
+    every single video a Reel, so a post needs 2+ slides: it['carousel'] lists files from the item's own release
+    (.mp4 = video slide, else a JPEG image), first slide sets the shape. Tried once after the Reel + Story, like
+    the Story: a failure is reported, never retried, and never fails the Reel."""
+    parked = []
+    try:
+        d = os.path.dirname(publish.video_file(it, work))
+        kids = []
+        for name in it["carousel"]:
+            path = os.path.join(d, name)
+            video = name.endswith(".mp4")
+            p = park(small_enough(path, work) if video else path)
+            parked.append(p)
+            params = {"is_carousel_item": "true", **({"media_type": "VIDEO", "video_url": p["url"]} if video else {"image_url": p["url"]})}
+            kids.append(graph(f"/{tok['user_id']}/media", tok["token"], params, post=True)["id"])
+        for k in kids:
+            wait_finished(tok, k)
+        c = graph(f"/{tok['user_id']}/media", tok["token"], {"media_type": "CAROUSEL", "children": ",".join(kids),
+                                                              "caption": it.get("post_caption") or caption_for(it, work)}, post=True)
+        wait_finished(tok, c["id"])
+        if dry:
+            print(f"{it['id']}: DRY, post container FINISHED ({len(kids)} slides), not published")
+            return
+        pid, link = publish_container(tok, c["id"])
+        print(f"{it['id']}: post {pid} {link}")
+    except Exception as e:
+        print(f"{it['id']}: post FAILED {str(e)[:300]}")
         try:
-            common.worker(f"/clipbot/igfile?key={parked['key']}", method="DELETE")
+            common.worker("/clipbot/failed", {"id": f"Post {it['id']}", "error": "Reel is up, the swipe post was not posted: " + str(e)[:250]})
         except Exception:
             pass
+    finally:
+        unpark(parked)
 
 
 def post_reel(tok, path, caption, dry):
@@ -208,12 +255,16 @@ def main():
             if mid is None:
                 print(f"{it['id']}: DRY, container FINISHED, not published. caption={json.dumps(caption, ensure_ascii=False)[:300]}")
                 post_story(tok, it, path, dry)
+                if it.get("carousel"):
+                    post_carousel(tok, it, work, dry)
                 continue
             posted += 1
             recent.insert(0, {"id": mid, "caption": caption, "permalink": link})
             print(f"{it['id']}: Reel {mid} {link}")
             common.worker("/clipbot/igdone", {"id": it["id"], "media_id": mid, "url": link})
             post_story(tok, it, path, dry)
+            if it.get("carousel"):
+                post_carousel(tok, it, work, dry)
         except Exception as e:
             failed += 1
             print(f"{it['id']}: FAILED {str(e)[:300]}")

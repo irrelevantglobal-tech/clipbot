@@ -62,8 +62,9 @@ class ReelsTest(unittest.TestCase):
     def run_main(self, fake, dry="0"):
         tmp = tempfile.mkdtemp()
         clip = os.path.join(tmp, "clip.mp4")
-        with open(clip, "wb") as f:
-            f.write(b"\0" * 100)
+        for name in ("clip.mp4", "clip2.mp4", "poster.jpg"):
+            with open(os.path.join(tmp, name), "wb") as f:
+                f.write(b"\0" * 100)
         saved = (common.worker, common.http, publish.video_file, os.environ.get("IG_DRY"))
         common.worker, common.http, publish.video_file = fake.worker, fake.http, lambda it, w: clip
         os.environ["IG_DRY"] = dry
@@ -184,6 +185,42 @@ class ReelsTest(unittest.TestCase):
         f = Fake([item(1, 1)], recent=[{"id": "OLD", "caption": cap, "permalink": "p"}])
         self.run_main(f)
         self.assertFalse(any(c[0] == "http" and c[1].endswith("/42/media") and c[2] for c in f.calls))
+
+    def test_carousel_item_also_goes_out_as_a_swipe_post(self):
+        it = dict(item(1, 1), carousel=["clip2.mp4", "poster.jpg"], post_caption="the post caption")
+        f = Fake([it])
+        self.run_main(f)
+        made = [c[2].decode() for c in f.calls if c[0] == "http" and c[1].endswith("/42/media") and c[2]]
+        self.assertEqual(len(made), 5)                           # Reel, Story, 2 slides, the post
+        self.assertIn("is_carousel_item=true", made[2])
+        self.assertIn("media_type=VIDEO", made[2])
+        self.assertIn("image_url=", made[3])
+        self.assertNotIn("media_type", made[3])
+        self.assertIn("media_type=CAROUSEL", made[4])
+        self.assertIn("children=C1%2CC1", made[4])
+        self.assertIn("caption=the+post+caption", made[4])
+        pub = [c for c in f.calls if c[0] == "http" and c[1].endswith("media_publish")]
+        self.assertEqual(len(pub), 3)                            # Reel, Story, post
+        self.assertEqual(sum(1 for c in f.calls if c[3] == "DELETE"), 4, "every parked file is removed")
+
+    def test_failed_post_is_reported_and_never_fails_the_reel(self):
+        it = dict(item(1, 1), carousel=["clip2.mp4", "poster.jpg"])
+        f = Fake([it])
+        real = f.http
+
+        def http(url, data=None, **kw):
+            if url.endswith("/42/media") and data and b"CAROUSEL" in data:
+                raise RuntimeError("HTTP 400 carousel rejected")
+            return real(url, data, **kw)
+        f.http = http
+        self.run_main(f)                                         # no SystemExit
+        self.assertEqual(next(c[2] for c in f.calls if c[1] == "/clipbot/igdone")["media_id"], "M1")
+        self.assertEqual(next(c[2] for c in f.calls if c[1] == "/clipbot/failed")["id"], "Post vod:1:1")
+
+    def test_plain_item_gets_no_post(self):
+        f = Fake([item(1, 1)])
+        self.run_main(f)
+        self.assertFalse(any(c[0] == "http" and c[2] and b"CAROUSEL" in c[2] for c in f.calls))
 
     def test_no_login_does_nothing(self):
         f = Fake([item(1, 1)], login=False)
