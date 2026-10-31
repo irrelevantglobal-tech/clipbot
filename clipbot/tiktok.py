@@ -234,7 +234,8 @@ def main():
                 caption = caption_for(it, work)
                 at = datetime.fromisoformat(it["at"].replace("Z", "+00:00"))
                 dup = next((e for e, d in taken.items() if d[:40] == caption[:40]), None)
-                crowded = any(abs(e - at.timestamp()) < 90 * 60 for e in taken)
+                # exact: a hand-booked post (the GTA 6 trailer, 1 Nov 09:00) keeps its time even beside another
+                crowded = not it.get("exact") and any(abs(e - at.timestamp()) < 90 * 60 for e in taken)
                 if dup is not None:
                     at = datetime.fromtimestamp(dup, common.UTC)
                 elif at < datetime.now(common.UTC) + MIN_LEAD or crowded:
