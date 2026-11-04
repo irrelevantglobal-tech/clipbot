@@ -183,6 +183,7 @@ def main():
         try:
             title = yt_title(it["title"])
             desc = build_description(it, marker)
+            legacy.check(title, desc, where=it["id"])
             tags = [t for t in (it.get("tags") or []) if isinstance(t, str)][:15] + [common.LOGIN, "shorts"]
             tags = list(dict.fromkeys(t.strip() for t in tags if t.strip()))
             matches = [v for v in uploads if marker in v["snippet"].get("description", "")]

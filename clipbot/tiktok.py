@@ -236,6 +236,7 @@ def main():
             try:
                 path = publish.video_file(it, work)
                 caption = caption_for(it, work)
+                legacy.check(caption, where=it["id"])
                 at = datetime.fromisoformat(it["at"].replace("Z", "+00:00"))
                 dup = next((e for e, d in taken.items() if d[:40] == caption[:40]), None)
                 # exact: a hand-booked post (the GTA 6 trailer, 1 Nov 09:00) keeps its time even beside another

@@ -21,6 +21,22 @@ def _new(m):
     return common.BRAND if s[0].isupper() else common.LOGIN
 
 
+def _squash(s):
+    return re.sub(r"[^a-z0-9]", "", (s or "").lower())
+
+
+def check(*texts, where=""):
+    """Hard stop: refuse to post anything whose outgoing copy still names a retired channel, even split by spaces or
+    punctuation ('old name', 'old_name'). Raises, so that item is NOT posted (callers report it and move on)."""
+    if common.WHO != "leon":
+        return
+    names = [_squash(n) for n in common.IDENT.get("legacy", []) if _squash(n)]
+    for t in texts:
+        sq = _squash(t)
+        if any(n in sq for n in names):
+            raise RuntimeError(f"{where or 'post'}: a retired channel name is still in the outgoing copy; NOT posted")
+
+
 def fix(text):
     if common.WHO != "leon" or not text or _OLD is None:
         return text

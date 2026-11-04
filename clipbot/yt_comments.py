@@ -82,6 +82,7 @@ def main():
                 print(f"{vid}: already has our comment")
                 continue
             text = common.promo_comment(clip_title(v["snippet"]["title"]), key, link=LINK)
+            legacy.check(text, where=key)
             if dry:
                 print(f"{vid}: DRY, not posted: {json.dumps(text, ensure_ascii=False)}")
                 continue

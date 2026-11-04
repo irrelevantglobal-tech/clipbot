@@ -67,6 +67,19 @@ class IdentityFromSecret(unittest.TestCase):
             os.environ["CLIPBOT_ID"] = saved
 
 
+class GuardBlocks(unittest.TestCase):
+    def test_check_refuses_even_when_split(self):
+        legacy = load(None)[0]
+        for bad in (f"hi {OLD}", f"hi {OLD[:3]} {OLD[3:]}", f"#{OLD.lower()}", f"{OLD[:3]}_{OLD[3:]}".upper()):
+            with self.assertRaises(RuntimeError):
+                legacy.check(bad, where="x")
+        legacy.check("a perfectly clean caption #ownerlogin", where="x")
+
+    def test_check_never_touches_glatiar(self):
+        legacy = load("glatiar")[0]
+        legacy.check(f"hi {OLD}", where="x")
+
+
 class LegacyGlatiarUntouched(unittest.TestCase):
     def test_glatiar_text_is_never_rewritten(self):
         legacy = load("glatiar")[0]

@@ -221,6 +221,7 @@ def post_comment(tok, it, mid, dry):
     pin, and links in IG comments are never clickable, so it names the channel. Tried once, right after the Reel;
     a failure is reported, never retried, and never fails the Reel."""
     text = common.promo_comment(legacy.fix(it.get("title", "")), it["id"])
+    legacy.check(text, where=it["id"])
     if dry:
         print(f"{it['id']}: DRY, comment not posted: {json.dumps(text, ensure_ascii=False)}")
         return
@@ -268,6 +269,7 @@ def main():
                 continue
             path = small_enough(publish.video_file(it, work), work)
             caption = caption_for(it, work)
+            legacy.check(caption, where=it["id"])
             same = next((m for m in recent if (m.get("caption") or "")[:60] == caption[:60]), None)
             if same:
                 print(f"{it['id']}: already on Instagram {same.get('permalink', same['id'])}")
