@@ -1,0 +1,5 @@
+faster-whisper==1.2.1
+requests
+huggingface_hub
+yt-dlp
+Pillow
