@@ -223,15 +223,21 @@ def marker_text(it):
 def posted_marker(tok, it, recent, depth=20):
     """Idempotency by clip marker (2026-11-05, after one clip went up twice because its caption is regenerated every
     run, so the caption check could not see it): every Reel gets OUR first comment, and that text is a fixed function
-    of (title, clip id). If any recent Reel already carries it, this clip is already on Instagram."""
+    of (title, clip id). If any recent Reel already carries it, this clip is already on Instagram. Fails closed: if a
+    Reel's comments could not be read and nothing matched, raises so the caller skips the clip this run instead of
+    posting it blind."""
     want = marker_text(it).strip()
+    errors = 0
     for m in recent[:depth]:
         try:
-            cs = graph(f"/{m['id']}/comments", tok["token"], {"fields": "text", "limit": 25}).get("data", [])
+            cs = graph(f"/{m['id']}/comments", tok["token"], {"fields": "text", "limit": 50}).get("data", [])
         except Exception:
+            errors += 1
             continue
         if any((c.get("text") or "").strip() == want for c in cs):
             return m
+    if errors:
+        raise RuntimeError(f"could not read comments on {errors} recent Reels, so cannot prove this clip is not already up; not posted this run")
     return None
 
 
@@ -253,6 +259,23 @@ def post_comment(tok, it, mid, dry):
             common.worker("/clipbot/failed", {"id": f"Comment {it['id']}", "error": "Reel is up, the comment was not posted: " + str(e)[:250]})
         except Exception:
             pass
+
+
+def tell_done(it, mid, link, tries=3, wait=5):
+    """Record the Reel with the worker, retrying: an item left in the queue is what reposts a clip. True once told."""
+    body = {"id": it["id"], "media_id": mid, "url": link}
+    for n in range(tries):
+        try:
+            common.worker("/clipbot/igdone", body)
+            if any(x.get("id") == it["id"] for x in common.worker("/clipbot/igqueue").get("items", [])):
+                common.worker("/clipbot/igdone", body)
+                print(f"{it['id']}: still listed after igdone (told the worker again)")
+            return True
+        except Exception as e:
+            print(f"{it['id']}: igdone try {n + 1} failed: {str(e)[:200]}")
+            if n + 1 < tries:
+                time.sleep(wait)
+    return False
 
 
 def main():
@@ -306,17 +329,13 @@ def main():
             posted += 1
             recent.insert(0, {"id": mid, "caption": caption, "permalink": link})
             print(f"{it['id']}: Reel {mid} {link}")
-            common.worker("/clipbot/igdone", {"id": it["id"], "media_id": mid, "url": link})
-            try:
-                if any(x.get("id") == it["id"] for x in common.worker("/clipbot/igqueue").get("items", [])):
-                    common.worker("/clipbot/igdone", {"id": it["id"], "media_id": mid, "url": link})
-                    print(f"{it['id']}: still listed after igdone (told the worker again)")
-            except Exception:
-                pass
-            post_comment(tok, it, mid, dry)
+            post_comment(tok, it, mid, dry)      # first: it is the marker that stops a repost if the worker call below fails
+            told = tell_done(it, mid, link)
             post_story(tok, it, path, dry)
             if it.get("carousel"):
                 post_carousel(tok, it, work, dry)
+            if not told:
+                raise RuntimeError("Reel is up but the worker was not told; the marker comment stops a repost next run")
         except Exception as e:
             failed += 1
             print(f"{it['id']}: FAILED {str(e)[:300]}")

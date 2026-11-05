@@ -34,7 +34,7 @@ import subprocess
 import sys
 from datetime import datetime
 
-from . import common, render
+from . import common, legacy, render
 
 HOLE_MIN = 100.0         # s of no speech before a stretch can be cut at all
 MOTION_STILL = 1.6       # mean abs luma change per second (0-255 scale, 64x36) below which a frame pair is "still"
@@ -330,6 +330,10 @@ def description_for(desc, hashtags, marker):
 
 def check_meta(title, description):
     probs = [why for rx, why in BANNED if rx.search(title) or rx.search(description)]
+    try:
+        legacy.check(title, description, where="episode")
+    except RuntimeError as e:
+        probs.append(str(e))
     if common.LOGIN.lower() not in description.lower():
         probs.append("no channel name in description")
     if len(title) > 100:

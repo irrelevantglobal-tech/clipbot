@@ -44,6 +44,8 @@ class Fake:
             return {"key": "k" * 32, "url": "https://w/clipbot/igfile/" + "k" * 32}
         if "/42/media?" in url:
             return {"data": self.recent}
+        if "/comments" in url:
+            return {"id": "K1"} if data else {"data": []}
         if url.endswith("/42/media"):
             return {"id": "C1"}
         if "/C1?" in url:
@@ -236,6 +238,51 @@ if __name__ == "__main__":
 
 
 class MarkerTest(unittest.TestCase):
+    run_main = ReelsTest.run_main
+
+    def test_unreadable_comments_refuse_the_post(self):
+        f = Fake([item(1, 1)], recent=[{"id": "M9", "caption": "something else", "permalink": "p"}])
+        real = f.http
+
+        def http(url, data=None, **kw):
+            if "/M9/comments" in url:
+                raise RuntimeError("HTTP 500")
+            return real(url, data, **kw)
+        f.http = http
+        with self.assertRaises(SystemExit):
+            self.run_main(f)
+        self.assertFalse(any(c[1].endswith("media_publish") for c in f.calls if c[0] == "http"))
+        self.assertFalse(any(c[1] == "/clipbot/igdone" for c in f.calls))
+        self.assertTrue(any(c[1] == "/clipbot/failed" for c in f.calls))
+
+    def test_marker_comment_goes_up_before_the_worker_is_told(self):
+        f = Fake([item(1, 1)])
+        self.run_main(f)
+        names = [c[1] for c in f.calls]
+        comment = next(i for i, c in enumerate(f.calls) if c[0] == "http" and c[1].endswith("/comments") and c[2])
+        self.assertLess(comment, names.index("/clipbot/igdone"))
+
+    def test_worker_down_after_the_reel_keeps_marker_and_story_and_fails_the_run(self):
+        f = Fake([item(1, 1)])
+        real = f.worker
+
+        def worker(path, payload=None, method=None):
+            if path == "/clipbot/igdone":
+                raise RuntimeError("HTTP 503")
+            return real(path, payload, method)
+        f.worker = worker
+        saved = instagram.time.sleep
+        instagram.time.sleep = lambda s: None
+        try:
+            with self.assertRaises(SystemExit):
+                self.run_main(f)
+        finally:
+            instagram.time.sleep = saved
+        made = [c[2].decode() for c in f.calls if c[0] == "http" and c[1].endswith("/42/media") and c[2]]
+        self.assertEqual(len(made), 2)                           # Reel + Story, once each
+        self.assertTrue(any(c[0] == "http" and c[1].endswith("/comments") and c[2] for c in f.calls))
+        self.assertEqual(sum(1 for c in f.calls if c[0] == "http" and c[1].endswith("media_publish")), 2)
+
     def test_clip_already_up_is_found_by_its_first_comment(self):
         it = {"id": "vod:1:4", "title": "Optical Illusion"}
         want = instagram.marker_text(it)
