@@ -216,11 +216,30 @@ def post_story(tok, it, path, dry):
             pass
 
 
+def marker_text(it):
+    return common.promo_comment(legacy.fix(it.get("title", "")), it["id"])
+
+
+def posted_marker(tok, it, recent, depth=20):
+    """Idempotency by clip marker (2026-11-05, after one clip went up twice because its caption is regenerated every
+    run, so the caption check could not see it): every Reel gets OUR first comment, and that text is a fixed function
+    of (title, clip id). If any recent Reel already carries it, this clip is already on Instagram."""
+    want = marker_text(it).strip()
+    for m in recent[:depth]:
+        try:
+            cs = graph(f"/{m['id']}/comments", tok["token"], {"fields": "text", "limit": 25}).get("data", [])
+        except Exception:
+            continue
+        if any((c.get("text") or "").strip() == want for c in cs):
+            return m
+    return None
+
+
 def post_comment(tok, it, mid, dry):
     """Owner 2026-10-31: every new Reel gets our own first comment (about the clip + the streams). The API has no
     pin, and links in IG comments are never clickable, so it names the channel. Tried once, right after the Reel;
     a failure is reported, never retried, and never fails the Reel."""
-    text = common.promo_comment(legacy.fix(it.get("title", "")), it["id"])
+    text = marker_text(it)
     legacy.check(text, where=it["id"])
     if dry:
         print(f"{it['id']}: DRY, comment not posted: {json.dumps(text, ensure_ascii=False)}")
@@ -270,7 +289,7 @@ def main():
             path = small_enough(publish.video_file(it, work), work)
             caption = caption_for(it, work)
             legacy.check(caption, where=it["id"])
-            same = next((m for m in recent if (m.get("caption") or "")[:60] == caption[:60]), None)
+            same = next((m for m in recent if (m.get("caption") or "")[:60] == caption[:60]), None) or posted_marker(tok, it, recent)
             if same:
                 print(f"{it['id']}: already on Instagram {same.get('permalink', same['id'])}")
                 if not dry:
@@ -288,6 +307,12 @@ def main():
             recent.insert(0, {"id": mid, "caption": caption, "permalink": link})
             print(f"{it['id']}: Reel {mid} {link}")
             common.worker("/clipbot/igdone", {"id": it["id"], "media_id": mid, "url": link})
+            try:
+                if any(x.get("id") == it["id"] for x in common.worker("/clipbot/igqueue").get("items", [])):
+                    common.worker("/clipbot/igdone", {"id": it["id"], "media_id": mid, "url": link})
+                    print(f"{it['id']}: still listed after igdone (told the worker again)")
+            except Exception:
+                pass
             post_comment(tok, it, mid, dry)
             post_story(tok, it, path, dry)
             if it.get("carousel"):

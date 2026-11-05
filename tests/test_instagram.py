@@ -28,6 +28,8 @@ class Fake:
 
     def worker(self, path, payload=None, method=None):
         self.calls.append(("worker", path, payload, method))
+        if path == "/clipbot/igdone" and payload:                       # the real worker lets go of the item
+            self.items = [i for i in self.items if i["id"] != payload["id"]]
         if path == "/clipbot/igqueue":
             return {"items": self.items, "login": self.login}
         if path == "/clipbot/igtoken" and payload is None:
@@ -231,3 +233,24 @@ class ReelsTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class MarkerTest(unittest.TestCase):
+    def test_clip_already_up_is_found_by_its_first_comment(self):
+        it = {"id": "vod:1:4", "title": "Optical Illusion"}
+        want = instagram.marker_text(it)
+        calls = []
+
+        def fake_graph(path, token, params=None, post=False, retries=3):
+            calls.append(path)
+            return {"data": [{"text": want}]} if path.startswith("/M2/") else {"data": [{"text": "someone else"}]}
+
+        old = instagram.graph
+        instagram.graph = fake_graph
+        try:
+            tok = {"token": "T", "user_id": "42"}
+            hit = instagram.posted_marker(tok, it, [{"id": "M1"}, {"id": "M2"}, {"id": "M3"}])
+            self.assertEqual(hit, {"id": "M2"})
+            self.assertIsNone(instagram.posted_marker(tok, {"id": "vod:1:9", "title": "Other"}, [{"id": "M1"}, {"id": "M2"}]))
+        finally:
+            instagram.graph = old
