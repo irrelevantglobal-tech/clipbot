@@ -150,6 +150,48 @@ class Copy(unittest.TestCase):
         self.assertIn("gta 6 part 4", E.tags_for("GTA 6", 4))
 
 
+class DuplicateGuard(unittest.TestCase):
+    """An episode must never be uploaded twice. The uploads playlist is known to miss videos."""
+    MARK = "clipbot:ep:5:3600"
+
+    def setUp(self):
+        E._ledger = None
+
+    def run_guard(self, uploads, ledger, on_youtube=True):
+        vids = {"items": [{"snippet": {"channelId": common.CHANNEL_ID}}] if on_youtube else []}
+        with mock.patch.object(common, "recent_uploads", return_value=uploads), \
+             mock.patch.object(common, "worker", side_effect=ledger if isinstance(ledger, Exception) else None,
+                               return_value=None if isinstance(ledger, Exception) else ledger) as w, \
+             mock.patch.object(common, "yt", return_value=vids):
+            return E.marker_on_channel(self.MARK), w
+
+    def test_found_in_the_uploads_playlist(self):
+        got, w = self.run_guard([{"id": "A", "snippet": {"description": "x " + self.MARK}}], {"items": []})
+        self.assertEqual(got, "A")
+        w.assert_not_called()
+
+    def test_missing_from_the_playlist_but_carded_before(self):
+        ledger = {"items": [{"marker": "clipbot:ep:5:0", "video": "Z"}, {"marker": self.MARK, "video": "B"}]}
+        self.assertEqual(self.run_guard([], ledger)[0], "B")
+
+    def test_carded_before_but_deleted_since_is_uploaded_again(self):
+        self.assertEqual(self.run_guard([], {"items": [{"marker": self.MARK, "video": "B"}]}, on_youtube=False)[0], "")
+
+    def test_in_neither_means_upload(self):
+        self.assertEqual(self.run_guard([], {"items": []})[0], "")
+
+    def test_worker_unreadable_stops_the_run(self):
+        with self.assertRaises(OSError):
+            self.run_guard([], OSError("down"))
+        E._ledger = None
+        with self.assertRaises(RuntimeError):
+            self.run_guard([], {"error": "nope"})
+
+    def test_channel_unreadable_stops_the_run(self):
+        with self.assertRaises(RuntimeError):
+            self.run_guard(None, {"items": []})
+
+
 def ep(vod, start, status, created="2026-11-19T18:00:00Z", **kw):
     return {"key": f"{vod}:{start}", "vod": vod, "start": start, "vod_created": created, "series": "GTA 6",
             "status": status, "hook": "Hook", "video": f"v{vod}{start}", **kw}

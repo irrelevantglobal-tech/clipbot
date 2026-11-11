@@ -404,12 +404,35 @@ def upload_private(path, title, description, tags):
     return common.upload_session(session, path, size)
 
 
+_ledger = None
+
+
 def marker_on_channel(marker):
-    """The video id carrying this marker, '' if none. Raises if YouTube cannot be read."""
+    """The video id already holding this episode, '' if none. Raises if either source cannot be read.
+
+    Two sources, because each misses things: the uploads playlist shows only the newest 50 and can lag or
+    omit a video, and the worker's list only knows episodes that got as far as a card. Uploading on one
+    source alone is how a duplicate gets made, so a run that cannot read both stops instead."""
+    global _ledger
     ups = common.recent_uploads(50)
     if not isinstance(ups, list):
         raise RuntimeError("could not read the channel")
-    return common.find_marker(marker, ups) or ""
+    hit = common.find_marker(marker, ups)
+    if hit:
+        return hit
+    if _ledger is None:
+        got = common.worker("/clipbot/eplist")
+        if not isinstance(got, dict) or not isinstance(got.get("items"), list):
+            raise RuntimeError("could not read the worker's episode list")
+        _ledger = got["items"]
+    for it in _ledger:
+        vid = it.get("video")
+        if it.get("marker") != marker or not vid:
+            continue
+        live = common.yt("videos", part="snippet", id=vid).get("items", [])
+        if live and live[0]["snippet"].get("channelId") == common.CHANNEL_ID:
+            return vid                                # carded before and still on the channel
+    return ""
 
 
 # ---------------- main ----------------
