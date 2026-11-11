@@ -327,6 +327,11 @@ def episode_notes(vod, s, e):
     return [str(m.get("note", ""))[:120] for m in sorted(ms, key=lambda m: m.get("t", 0)) if s <= float(m.get("t", -1)) < e][:12]
 
 
+def plain_dashes(text):
+    """Writers love long dashes and the copy rules ban them. Swap them rather than lose the whole draft."""
+    return re.sub(r" ?\u2014 ?", ", ", text).replace("\u2013", "-")
+
+
 def episode_copy(series, text, stream_title, notes=()):
     """AI draft (worker /clipbot/epcopy): hook title + description. Fallback: plain text. Every
     word is shown on the Discord card and editable before anything is scheduled."""
@@ -336,8 +341,8 @@ def episode_copy(series, text, stream_title, notes=()):
                                               "transcript": text[:6000], "notes": list(notes)})
     except Exception as e:
         print(f"  epcopy unavailable ({str(e)[:100]}), plain draft")
-    hook = re.sub(r"\s+", " ", str(r.get("hook", ""))).strip().strip('"')
-    desc = str(r.get("description", "")).strip()
+    hook = re.sub(r"\s+", " ", plain_dashes(str(r.get("hook", "")))).strip().strip('"')
+    desc = plain_dashes(str(r.get("description", ""))).strip()
     hook = hook if 3 <= len(hook) <= 70 else ""
     desc = desc if 40 <= len(desc) <= 1500 else ""
     return {"hook": hook, "description": desc,
@@ -478,7 +483,7 @@ def main():
         # cut as away and the lane moves on. He is told once per window, in case it was the audio instead.
         print(f"  only {len(words)} words in {(hi - lo) / 60:.0f} min: treated as away")
         try:
-            common.worker("/clipbot/failed", {"id": f"episodes {a.vod} from {int(lo)}", "error":
+            common.worker("/clipbot/failed", {"id": f"episodes {a.vod} window {int(lo)}", "note": True, "error":
                           f"almost no speech between {fmt(lo)} and {fmt(hi)} of the stream ({len(words)} words). "
                           f"Treated as away: {len(eps)} episode(s) cut from it. If you were playing, tell Claude."})
         except Exception as ex:

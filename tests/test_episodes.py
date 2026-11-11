@@ -130,6 +130,21 @@ class Copy(unittest.TestCase):
         self.assertIn("em dash", E.check_meta("GTA 6 Part 1 — x", ok))
         self.assertIn("no channel name in description", E.check_meta("GTA 6 Part 1", "nothing here"))
 
+    def test_long_dashes_are_swapped_not_fatal(self):
+        reply = {"hook": "I Robbed A Bank " + chr(0x2014) + " Badly", "hashtags": ["#GTA6"],
+                 "description": "We went in loud" + chr(0x2014) + "it went worse than planned, pages 1" + chr(0x2013) + "2 of the plan gone."}
+        with mock.patch.object(common, "worker", return_value=reply):
+            c = E.episode_copy("GTA 6", "words", "stream")
+        self.assertEqual(c["hook"], "I Robbed A Bank, Badly")
+        self.assertIn("loud, it went", c["description"])
+        self.assertIn("1-2", c["description"])
+        d = E.description_for(c["description"], c["hashtags"], "clipbot:ep:1:0")
+        self.assertEqual(E.check_meta(E.title_for("GTA 6", 1, c["hook"]), d), [])
+
+    def test_worker_down_gives_a_plain_draft(self):
+        with mock.patch.object(common, "worker", side_effect=OSError("down")), contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(E.episode_copy("GTA 6", "words", "stream"), {"hook": "", "description": "", "hashtags": []})
+
     def test_tags_carry_the_login_not_a_literal(self):
         self.assertEqual(E.tags_for("GTA 6", 4)[-1], _ident.LOGIN)
         self.assertIn("gta 6 part 4", E.tags_for("GTA 6", 4))
