@@ -45,6 +45,11 @@ TARGET, MIN_LEN, MAX_LEN = 55 * 60, 40 * 60, 75 * 60
 TAIL_MERGE = 15 * 60     # --final: a leftover shorter than this joins the previous episode
 SLACK = 20.0             # s of extra video fetched either side of an episode range
 LEAD = 0.3               # s: cut-in this long before speech resumes, cut-out this long after it stops
+# A stream that never goes offline (the owner sleeps on a resting screen):
+AWAY_MIN = 20 * 60       # s without one word = nobody is there; cut whatever the picture does (an animated screen is not "still")
+SESSION_BREAK = 30 * 60  # s: a cut hole this long ends a session; what came before it is closed like the end of a stream
+STUCK_WINDOW = 3 * 3600  # s: a window this long that yields nothing and would start again at the same second is closed too
+QUIET_WORDS_PER_H = 100  # fewer words than this per hour = away, or a broken download (audio_problem tells which)
 
 MARK = "clipbot:ep:"
 
@@ -98,12 +103,20 @@ def holes(words, mot, lo, hi):
         keep_b = b - (0 if b >= hi - 0.01 else HOLE_PAD)
         # An animated starting/BRB scene is "still" only ~78% of seconds (2904919965: median 1.44, gameplay ~12),
         # so a near-still MEDIAN counts too.
-        cut = still >= STILL_SHARE or (med < MOTION_STILL and still >= 0.6)
+        away = b - a >= AWAY_MIN
+        cut = away or still >= STILL_SHARE or (med < MOTION_STILL and still >= 0.6)
         print(f"  gap {fmt(a)}-{fmt(b)} ({b - a:.0f}s) still {still:.0%} median motion {med}"
-              f" -> {'CUT' if cut else 'kept (picture moves)'}")
+              f" -> {('CUT (nobody there)' if away and still < 0.6 else 'CUT') if cut else 'kept (picture moves)'}")
         if cut and keep_b - keep_a > 10:
             out.append((keep_a, keep_b, {"still": round(still, 2), "median_motion": med}))
     return out
+
+
+def audio_problem(wav_seconds, lo, hi):
+    """Why the window audio cannot be trusted, or ''. A short file is a broken download; silence is not."""
+    if wav_seconds < (hi - lo) - 90:
+        return f"audio covers {wav_seconds / 60:.0f} of {(hi - lo) / 60:.0f} min"
+    return ""
 
 
 def fmt(s):
@@ -129,7 +142,26 @@ def kept_between(spans, a, b):
 
 
 def plan(words, spans, hs, lo, hi, final):
-    """Episode ranges [(start, end)] in source seconds. Boundaries: holes (best) or pauses >= PAUSE_MIN."""
+    """Episode ranges [(start, end)] in source seconds, and where the next window starts.
+
+    A hole of SESSION_BREAK or more (asleep, away) ends a session: what was played before it is closed
+    the way the end of a stream is. Without that, a short stretch before a long sleep was never long
+    enough for an episode, so every later window started at the same second and nothing moved again."""
+    eps, seg_lo = [], lo
+    for a, b, _ in hs:
+        if b - a < SESSION_BREAK:
+            continue
+        eps += _plan_part(words, spans, hs, seg_lo, a, True)[0]
+        seg_lo = b
+    got, start = _plan_part(words, spans, hs, seg_lo, hi, final)
+    return eps + got, start
+
+
+def _plan_part(words, spans, hs, lo, hi, final):
+    """One session [lo, hi]. Boundaries: holes (best) or pauses >= PAUSE_MIN."""
+    spans = [(max(a, lo), min(b, hi)) for a, b in spans if b > lo and a < hi]
+    hs = [h for h in hs if h[0] >= lo and h[1] <= hi]
+    words = [w for w in words if lo <= w["s"] < hi]
     # (this episode ends at, the next one starts at, quality). A pause boundary is ONE point,
     # 2.5 s after the last word (or LEAD before the next, if sooner): nothing between episodes is
     # dropped (a long silent drive stays in the next episode), and the next episode's keyframe snap
@@ -417,8 +449,10 @@ def main():
         json.dump(words, open(tpath, "w", encoding="utf-8"))
     words = [{**w, "s": w["s"] + lo, "e": w["e"] + lo} for w in words]
     print(f"{len(words)} words")
-    if len(words) < 100 * (hi - lo) / 3600:
-        raise SystemExit(f"only {len(words)} words for {(hi - lo) / 60:.0f} min; transcript looks broken, refusing to cut")
+    bad = audio_problem(render.duration(win_wav), lo, hi)
+    if bad:
+        raise SystemExit(f"{bad}; the download looks broken, refusing to cut")
+    quiet = len(words) < QUIET_WORDS_PER_H * (hi - lo) / 3600
 
     mpath = os.path.join(a.out, "window_motion.json")
     if os.path.exists(mpath):
@@ -436,6 +470,19 @@ def main():
     hs = holes(words, mot, lo, hi)
     spans_all = kept_spans(lo, hi, hs)
     eps, next_from = plan(words, spans_all, hs, lo, hi, a.final)
+    if not eps and not a.final and next_from <= lo + 1 and hi - lo >= STUCK_WINDOW:
+        print("  a full window with less than one episode in it: closing it so the next window can move on")
+        eps, next_from = plan(words, spans_all, hs, lo, hi, True)
+    if quiet:
+        # Nearly no speech in the whole window. On a stream that never stops that is the owner asleep, so it is
+        # cut as away and the lane moves on. He is told once per window, in case it was the audio instead.
+        print(f"  only {len(words)} words in {(hi - lo) / 60:.0f} min: treated as away")
+        try:
+            common.worker("/clipbot/failed", {"id": f"episodes {a.vod} from {int(lo)}", "error":
+                          f"almost no speech between {fmt(lo)} and {fmt(hi)} of the stream ({len(words)} words). "
+                          f"Treated as away: {len(eps)} episode(s) cut from it. If you were playing, tell Claude."})
+        except Exception as ex:
+            print(f"  could not tell the owner ({str(ex)[:80]})")
     cut_total = sum(b - a for a, b, _ in hs)
     print(f"{len(hs)} holes cut ({cut_total / 60:.1f} min), {len(eps)} episodes, next window from {fmt(next_from)}")
     for i, (s, e) in enumerate(eps, 1):
