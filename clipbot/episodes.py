@@ -205,27 +205,55 @@ def _plan_part(words, spans, hs, lo, hi, final):
 
 # ---------------- cutting ----------------
 
+PROBES = (30.0, 60.0, 90.0)   # s into the downloaded file: three 30 s stretches of its first 120 s
+AGREE = 0.05                  # s: probes that land within this of each other found the same spot
+AGREE_MIN = 0.3               # a probe must match at least this well to count as agreeing
+
+
 def offset_of(file_wav, win_wav, guess):
-    """Exact position (window seconds) of the file's start, by cross-correlating 60 s of audio
-    around the guess. Same VOD, same audio track, so the match is sharp."""
+    """Exact position (window seconds) of the file's start, by cross-correlating its audio envelope
+    against the window audio around the guess. Same VOD, same audio track, so the match is sharp
+    wherever there is sound to match.
+
+    Three stretches are tried, not one. Episode boundaries sit in pauses, so the first stretch is often
+    near silence, where only the two encodes' noise is left to compare and the score drops though the
+    offset is right (a real 11 Nov run: offset right to 0.02 s, score 0.49, run refused).
+    Returns the best-scoring offset. When two or more probes land on the same offset, that agreement is
+    the proof, and the score returned is the best of the agreeing ones."""
     import numpy as np
     sr = 1000                                         # 16 kHz / 16 = a 1 ms envelope
-    a = render.load_audio(file_wav, 30, 30)           # file t=30..60 ...
     base = max(0.0, guess)
-    b = render.load_audio(win_wav, base, 90)          # ... must sit in window [guess, guess+90] if the snap is < 30 s
+
     def env(x):
         n = len(x) // 16 * 16
         return np.abs(x[:n]).reshape(-1, 16).mean(axis=1)
-    ea, eb = env(a), env(b)
-    if len(ea) < sr or len(eb) < len(ea):
+
+    hits = []
+    for p in PROBES:
+        a = render.load_audio(file_wav, p, 30)        # file t = p .. p+30 ...
+        b = render.load_audio(win_wav, base, p + 60)  # ... must sit in window [guess, guess+p+60] if the snap is < 30 s
+        ea, eb = env(a), env(b)
+        if len(ea) < sr or len(eb) < len(ea):
+            continue
+        ea = ea - ea.mean()
+        eb = eb - eb.mean()
+        n = len(eb) + len(ea)
+        c = np.fft.irfft(np.fft.rfft(eb, n) * np.conj(np.fft.rfft(ea, n)), n)[:len(eb) - len(ea) + 1]
+        k = int(np.argmax(c))
+        peak = float(c[k] / (np.linalg.norm(ea) * np.linalg.norm(eb[k:k + len(ea)]) + 1e-9))
+        hits.append((base + k / sr - p, peak))
+    if not hits:
         raise RuntimeError("not enough audio to align")
-    ea = ea - ea.mean()
-    eb = eb - eb.mean()
-    n = len(eb) + len(ea)
-    c = np.fft.irfft(np.fft.rfft(eb, n) * np.conj(np.fft.rfft(ea, n)), n)[:len(eb) - len(ea) + 1]
-    k = int(np.argmax(c))
-    peak = c[k] / (np.linalg.norm(ea) * np.linalg.norm(eb[k:k + len(ea)]) + 1e-9)
-    return base + k / sr - 30, float(peak)
+    best = max(hits, key=lambda h: h[1])
+    agree = [h for h in hits if h[1] >= AGREE_MIN and abs(h[0] - best[0]) <= AGREE]
+    if best[1] < 0.5 and len(agree) < 2:
+        for o, pk in hits:                            # two weaker probes that agree with each other beat one strong miss
+            pair = [h for h in hits if h[1] >= AGREE_MIN and abs(h[0] - o) <= AGREE]
+            if len(pair) >= 2:
+                return o, max(0.5, max(h[1] for h in pair))
+    if len(agree) >= 2:
+        return best[0], max(0.5, best[1])
+    return best
 
 
 def keyframes(path, upto=None):
@@ -452,6 +480,7 @@ def main():
     a = ap.parse_args()
     a.out = os.path.abspath(a.out)
     os.makedirs(a.out, exist_ok=True)
+    print(f"runner: {runner_info()}")
     url = f"https://www.twitch.tv/videos/{a.vod}"
     v = common.helix(f"videos?id={a.vod}")["data"][0]
     total = _secs(v["duration"])
@@ -565,6 +594,24 @@ def main():
         json.dump(manifest, open(os.path.join(a.out, "episodes.json"), "w", encoding="utf-8"), indent=1, ensure_ascii=False)
     json.dump(manifest, open(os.path.join(a.out, "episodes.json"), "w", encoding="utf-8"), indent=1, ensure_ascii=False)
     print("manifest written")
+
+
+def runner_info():
+    """CPU and transcriber versions. The same 4 h window gave 15,246 words on one runner and 15,933 on the
+    next (same packages, same model), which moved an episode boundary; this line shows the cause next time."""
+    cpu = ""
+    try:
+        cpu = next((l.split(":", 1)[1].strip() for l in open("/proc/cpuinfo") if l.startswith("model name")), "")
+    except OSError:
+        pass
+    vers = []
+    for mod in ("faster_whisper", "ctranslate2", "yt_dlp"):
+        try:
+            m = __import__(mod)
+            vers.append(f"{mod} {getattr(m, '__version__', '') or getattr(getattr(m, 'version', None), '__version__', '?')}")
+        except Exception:
+            vers.append(f"{mod} ?")
+    return f"{cpu or '?'} x{os.cpu_count()}; " + ", ".join(vers)
 
 
 def _secs(d):

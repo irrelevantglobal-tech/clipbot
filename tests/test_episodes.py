@@ -106,6 +106,69 @@ class Cutting(unittest.TestCase):
         self.assertEqual(E.audio_problem(4 * H - 20, 0, 4 * H), "")
 
 
+def _wav(path, x):
+    import wave
+    import numpy as np
+    with wave.open(path, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(16000)
+        w.writeframes((np.clip(x, -1, 1) * 32767).astype("<i2").tobytes())
+
+
+@unittest.skipUnless(__import__("shutil").which("ffmpeg"), "needs ffmpeg")
+class Alignment(unittest.TestCase):
+    """The downloaded episode is placed on the window audio by matching sound. Episode boundaries sit in
+    pauses, so the stretch first compared can be near silence (a real 11 Nov run: right offset,
+    score 0.49, run refused). Only the two encodes' own noise is left there, which this simulates."""
+    SR = 16000
+
+    def signal(self, rng, seconds, quiet=()):
+        import numpy as np
+        n = int(seconds * self.SR)
+        x = np.zeros(n, dtype=np.float32)
+        t = 0.0
+        while t < seconds:                                          # talk: bursts of noise, gaps between
+            d = rng.uniform(0.2, 1.5)
+            a, b = int(t * self.SR), min(n, int((t + d) * self.SR))
+            x[a:b] = rng.normal(0, rng.uniform(0.05, 0.3), b - a)
+            t += d + rng.uniform(0.1, 0.8)
+        for a, b in quiet:
+            x[int(a * self.SR):int(b * self.SR)] = 0.0
+        return x
+
+    def place(self, quiet_in_file, offset=93.36, other_source=False):
+        import os
+        import tempfile
+        import numpy as np
+        rng = np.random.default_rng(7)
+        win = self.signal(rng, 400, quiet=[(offset + a, offset + b) for a, b in quiet_in_file])
+        f = win[int(offset * self.SR):int((offset + 120) * self.SR)].copy()
+        if other_source:
+            f = self.signal(np.random.default_rng(99), 120)
+        win = win + rng.normal(0, 0.002, len(win))                  # each encode's own noise floor
+        f = 0.8 * f + rng.normal(0, 0.002, len(f))
+        d = tempfile.mkdtemp(prefix="align-test-")
+        wp, fp = os.path.join(d, "win.wav"), os.path.join(d, "file.wav")
+        _wav(wp, win)
+        _wav(fp, f)
+        return E.offset_of(fp, wp, offset + 0.02)                   # the guess is a little off, as in real runs
+
+    def test_quiet_first_stretch_still_places_the_file(self):
+        start, peak = self.place([(28, 62)])
+        self.assertAlmostEqual(start, 93.36, delta=0.02)
+        self.assertGreaterEqual(peak, 0.5)
+
+    def test_talk_throughout_places_the_file(self):
+        start, peak = self.place([])
+        self.assertAlmostEqual(start, 93.36, delta=0.02)
+        self.assertGreater(peak, 0.9)
+
+    def test_audio_from_somewhere_else_is_still_refused(self):
+        start, peak = self.place([], other_source=True)
+        self.assertLess(peak, 0.5)
+
+
 class Copy(unittest.TestCase):
     def test_title_ends_with_the_brand_and_is_never_trimmed(self):
         self.assertEqual(E.title_for("GTA 6", 3, "I Robbed A Bank"), f"GTA 6 Part 3 - I Robbed A Bank | {_ident.BRAND}")
