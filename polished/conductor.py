@@ -373,6 +373,16 @@ class VastLane:
 
     def __enter__(self):
         self.host = self.job.__enter__()
+        try:
+            return self._setup()
+        except BaseException:
+            # 12 Nov: setup failed AFTER the box was rented, and `with` never calls __exit__ when __enter__
+            # raises, so the instance was left running. Destroy it here, then re-raise.
+            self.run.cost["vast"] += self.job.spent()
+            self.job.__exit__(None, None, None)
+            raise
+
+    def _setup(self):
         tar = os.path.join(self.job.dir, "repo.tgz")
         subprocess.run(["tar", "czf", tar, "-C", ROOT, "polished", "clipbot/style/fonts", "fonts"], check=True)
         self.host.run("mkdir -p /root/repo")

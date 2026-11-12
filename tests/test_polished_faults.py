@@ -280,3 +280,19 @@ class VastJob(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class VastSetupFailure(unittest.TestCase):
+    def test_box_is_destroyed_when_setup_fails_after_renting(self):
+        fv = FakeVast()
+        run = C.Run(SimpleNamespace(state=tempfile.mkdtemp(), out=tempfile.mkdtemp(), lane="vast"))
+        lane = C.VastLane.__new__(C.VastLane)
+        lane.run, lane.vast, lane.v = run, V, fv
+        lane.job = V.Job(fv, 1.0, 5, 3)
+        lane.job.iid = 100
+        lane.job.__enter__ = lambda: object()
+        with mock.patch.object(C.VastLane, "_setup", side_effect=V.VastError("setup failed")), \
+                contextlib.redirect_stdout(io.StringIO()):
+            with self.assertRaises(V.VastError):
+                lane.__enter__()
+        self.assertEqual(fv.destroyed, [100])

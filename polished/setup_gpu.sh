@@ -14,7 +14,8 @@ curl -fsSL "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpe
 export PATH=/opt/ffmpeg/bin:$PATH
 echo 'export PATH=/opt/ffmpeg/bin:$PATH' > /etc/profile.d/00-ffmpeg.sh
 ffmpeg -hide_banner -version | head -1
-ffmpeg -hide_banner -h full 2>/dev/null | grep -q -- "-fps_mode" || { echo "ffmpeg too old (no -fps_mode)"; exit 1; }
+ffmpeg -hide_banner -h full > /tmp/ffhelp.txt 2>/dev/null || true      # no pipe: grep -q + pipefail = false "too old"
+grep -q -- "-fps_mode" /tmp/ffhelp.txt || { echo "ffmpeg too old (no -fps_mode)"; exit 1; }
 PY=${PY:-python3}
 $PY -m pip install -q -r polished/requirements-gpu.txt
 SITE=$($PY -c "import site,sys;print(next(p for p in site.getsitepackages() if p.endswith('site-packages')))")
