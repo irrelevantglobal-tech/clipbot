@@ -42,9 +42,26 @@ concurrency:
   cancel-in-progress: false
 permissions:
   contents: read
+  actions: read          # the polished lane reads its ledger + state artifacts
 jobs:
+  # Repo variable EP_POLISHED = "1" sends the same window to the polished lane (polished.yml) instead of
+  # this stream-copy cut. Unset (the default) = this job, exactly as before. Same inputs, same manifest,
+  # same Discord cards; the worker cannot tell which lane answered.
+  polished:
+    if: ${{ vars.EP_POLISHED == '1' }}
+    uses: ./.github/workflows/polished.yml
+    with:
+      vod: ${{ inputs.vod }}
+      from: ${{ inputs.from }}
+      to: ${{ inputs.to }}
+      final: ${{ inputs.final }}
+      series: ${{ inputs.series }}
+      upload: ${{ inputs.upload }}
+      offer: ${{ inputs.offer }}
+      max_episodes: ${{ inputs.max_episodes }}
+    secrets: inherit
   cut:
-    if: ${{ github.event_name == 'workflow_dispatch' || vars.GO == '1' }}
+    if: ${{ vars.EP_POLISHED != '1' && (github.event_name == 'workflow_dispatch' || vars.GO == '1') }}
     runs-on: ubuntu-latest
     timeout-minutes: 300
     env:

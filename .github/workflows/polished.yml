@@ -1,0 +1,174 @@
+# Polished marathon episodes (polished/conductor.py): the recipe that passed the owner's blind test,
+# on a cloud GPU (lane 1 Modal, lane 2 Vast.ai), conducted from here so no laptop is ever involved.
+# Started by hand (tests) or from episodes.yml when the repo variable EP_POLISHED is "1" (OFF by default).
+# upload=false never touches YouTube. upload=true uploads PRIVATE with no schedule; approval in Discord
+# sets the date. Nothing here can make a video public.
+name: polished
+on:
+  workflow_dispatch:
+    inputs:
+      vod: {description: Twitch VOD id, required: true}
+      from: {description: window start (VOD seconds), default: "0"}
+      to: {description: window end (VOD seconds, 0 = end), default: "0"}
+      final: {description: the VOD has ended (emit the tail too), type: boolean, default: false}
+      series: {description: series name in titles, default: GTA 6}
+      upload: {description: upload PRIVATE (no schedule), type: boolean, default: false}
+      offer: {description: send uploaded episodes to Discord for approval, type: boolean, default: false}
+      lane: {description: GPU lane, type: choice, options: [auto, modal, vast], default: auto}
+      max_episodes: {description: test only, plan the first N (0 = all), default: "0"}
+      keep: {description: test only, keep the first N mp4s as an encrypted artifact (upload=false), default: "0"}
+      answers: {description: lane 4 (encrypted, from polished/hold.py), default: ""}
+  workflow_call:
+    inputs:
+      vod: {type: string, required: true}
+      from: {type: string, default: "0"}
+      to: {type: string, default: "0"}
+      final: {type: boolean, default: false}
+      series: {type: string, default: GTA 6}
+      upload: {type: boolean, default: false}
+      offer: {type: boolean, default: true}
+      lane: {type: string, default: auto}
+      max_episodes: {type: string, default: "0"}
+      keep: {type: string, default: "0"}
+      answers: {type: string, default: ""}
+permissions:
+  contents: read
+  actions: read          # the ledger + state artifacts of earlier runs
+jobs:
+  polish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 330   # under the worker's 6 h EP_STALE
+    concurrency:
+      group: polished-${{ inputs.vod }}
+      cancel-in-progress: false
+    env:
+      CLIPBOT_ZIP_KEY: ${{ secrets.CLIPBOT_ZIP_KEY }}
+      VOD: ${{ inputs.vod }}
+      FROM: ${{ inputs.from }}
+      TO: ${{ inputs.to }}
+      SERIES: ${{ inputs.series }}
+      MAXEP: ${{ inputs.max_episodes }}
+      KEEP: ${{ inputs.keep }}
+      LANE: ${{ inputs.lane }}
+      PYTHONUNBUFFERED: "1"
+      TWITCH_CLIENT_ID: ${{ secrets.TWITCH_CLIENT_ID }}
+      TWITCH_CLIENT_SECRET: ${{ secrets.TWITCH_CLIENT_SECRET }}
+      CLIPBOT_ID: ${{ secrets.CLIPBOT_ID }}
+      CLIPBOT_WORKER: ${{ secrets.CLIPBOT_WORKER }}
+      CLIPBOT_TOKEN: ${{ secrets.CLIPBOT_TOKEN }}
+      YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
+      YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
+      YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
+      MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+      MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+      GTA6_ANTHROPIC_KEY: ${{ secrets.GTA6_ANTHROPIC_KEY }}
+      VAST_API_KEY: ${{ secrets.VAST_API_KEY }}
+      GTA6_API_BUDGET: ${{ vars.GTA6_API_BUDGET }}
+      GTA6_API_SINCE: ${{ vars.GTA6_API_SINCE }}
+      GTA6_MODAL_HANDOFF: ${{ vars.GTA6_MODAL_HANDOFF }}
+      GITHUB_TOKEN: ${{ github.token }}
+      STATE_NAME: gta6-state-${{ inputs.vod }}-${{ inputs.from }}
+    steps:
+      - name: Check input
+        run: |
+          [[ "$VOD" =~ ^[0-9]{6,14}$ ]] || { echo "bad vod id"; exit 1; }
+          [[ "$FROM" =~ ^[0-9]+(\.[0-9]+)?$ && "$TO" =~ ^[0-9]+(\.[0-9]+)?$ && "$MAXEP" =~ ^[0-9]+$ && "$KEEP" =~ ^[0-9]+$ ]] || { echo "bad numbers"; exit 1; }
+          [[ "$SERIES" =~ ^[A-Za-z0-9\ :\'-]{2,40}$ ]] || { echo "bad series"; exit 1; }
+          [[ "$LANE" =~ ^(auto|modal|vast)$ ]] || { echo "bad lane"; exit 1; }
+          [[ -n "$CLIPBOT_ZIP_KEY" ]] || { echo "no CLIPBOT_ZIP_KEY: state would be public, refusing"; exit 1; }
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Room on the runner (episodes are ~2 GB each)
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL || true
+          df -h / | tail -1
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg fonts-dejavu-core
+      - run: pip install -q -r requirements.txt modal numpy pillow
+      - name: Restore this window's state from an earlier attempt (no second analysis, no second plan call)
+        run: |
+          mkdir -p state
+          id=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=$STATE_NAME&per_page=1" --jq '.artifacts[0] | select(.expired == false) | .id' || true)
+          if [ -n "$id" ]; then
+            gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$id/zip" > st.zip && unzip -q -o st.zip -d st_in
+            openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -pass env:CLIPBOT_ZIP_KEY -in st_in/state.tgz.enc | tar xz -C state
+            echo "restored $(ls state | wc -l) state file(s) from artifact $id"; rm -rf st.zip st_in
+          else echo "no earlier state"; fi
+      - name: Deploy the GPU app (lane 1)
+        if: env.MODAL_TOKEN_ID != ''
+        run: modal deploy polished/modal_app.py
+      - name: Lane 4 answers
+        if: inputs.answers != ''
+        env:
+          ANSWERS: ${{ inputs.answers }}
+        run: printf '%s' "$ANSWERS" | base64 -d | openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -pass env:CLIPBOT_ZIP_KEY | gunzip > answers.json
+      - name: Polish the window
+        run: |
+          args=(--vod "$VOD" --from "$FROM" --to "$TO" --series "$SERIES" --lane "$LANE" --max-episodes "$MAXEP" --keep "$KEEP" --state state --out out)
+          [[ "${{ inputs.final }}" == "true" ]] && args+=(--final)
+          [[ "${{ inputs.upload }}" == "true" ]] && args+=(--upload)
+          [[ -f answers.json ]] && args+=(--answers answers.json)
+          python -m polished.conductor "${args[@]}"
+      - name: Send uploaded episodes for approval
+        if: always() && inputs.upload && inputs.offer
+        env:
+          PARTIAL: ${{ job.status != 'success' }}
+        run: |
+          [[ -f out/episodes.json ]] || { echo "no manifest"; exit 0; }
+          python - <<'PY'
+          import json, os
+          from clipbot import common
+          m = json.load(open("out/episodes.json", encoding="utf-8"))
+          m["run_id"] = os.environ["GITHUB_RUN_ID"]
+          if os.environ.get("PARTIAL") == "true":
+              m["partial"] = True
+              m.pop("next_from", None)
+              m["final"] = False
+          print(common.worker("/clipbot/epoffer", m))
+          PY
+      - name: Encrypt the state (the repo is public)
+        if: always()
+        run: |
+          [ -d state ] && [ -n "$(ls -A state)" ] || exit 0
+          mkdir -p st_out && tar cz -C state . | openssl enc -aes-256-cbc -pbkdf2 -iter 200000 -salt -pass env:CLIPBOT_ZIP_KEY -out st_out/state.tgz.enc
+          [ -f out/episodes.json ] && openssl enc -aes-256-cbc -pbkdf2 -iter 200000 -salt -pass env:CLIPBOT_ZIP_KEY -in out/episodes.json -out st_out/manifest.json.enc || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ${{ env.STATE_NAME }}
+          path: st_out/
+          if-no-files-found: ignore
+          retention-days: 30
+          overwrite: true
+          compression-level: 0
+      - name: Ledger name
+        if: always()
+        id: led
+        run: echo "name=$(cat out/ledger_name.txt 2>/dev/null || echo gta6-ledger-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-api0-modal0-vast0)" >> "$GITHUB_OUTPUT" && mkdir -p led && date -u > led/at.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ${{ steps.led.outputs.name }}
+          path: led/
+          retention-days: 90
+      - name: Encrypt kept test episodes
+        if: always() && !inputs.upload && inputs.keep != '0'
+        run: |
+          mkdir -p kept; shopt -s nullglob
+          for f in out/keep_ep*.mp4; do openssl enc -aes-256-cbc -pbkdf2 -iter 200000 -salt -pass env:CLIPBOT_ZIP_KEY -in "$f" -out "kept/$(basename "$f").enc"; done
+      - uses: actions/upload-artifact@v4
+        if: always() && !inputs.upload && inputs.keep != '0'
+        with:
+          name: polished-kept-${{ inputs.vod }}-${{ inputs.from }}
+          path: kept/
+          if-no-files-found: ignore
+          retention-days: 3
+          compression-level: 0
+      - name: Tell the owner it failed
+        if: failure()
+        run: |
+          curl -s -X POST -H "Authorization: Bearer $CLIPBOT_TOKEN" -H "Content-Type: application/json" \
+            -A "ClipBot/1.0" -d "{\"id\":\"polished $VOD from $FROM\",\"error\":\"GitHub run $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID failed\"}" \
+            $CLIPBOT_WORKER/clipbot/failed || true

@@ -1,0 +1,12 @@
+# One recipe for every GPU lane (Modal image AND the Vast.ai setup script read this file).
+# Pins = the set that passed T1/T2 on Modal (2026-10-30). yt-dlp unpinned on purpose: it only fetches
+# the playback token, and Twitch changes break old versions.
+faster-whisper==1.1.1
+nvidia-cublas-cu12==12.4.5.8
+nvidia-cudnn-cu12==9.1.0.70
+numpy<2.3
+pillow
+requests
+torch==2.5.1
+open_clip_torch==2.29.0
+yt-dlp

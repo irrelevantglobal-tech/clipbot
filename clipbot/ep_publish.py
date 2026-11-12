@@ -122,6 +122,8 @@ def schedule(it, part, slot, playlist, dry):
     series = it.get("series") or "GTA 6"
     title = episodes.title_for(series, part, it["hook"])
     desc = episodes.description_for(it.get("description") or "", it.get("hashtags") or [], it["marker"])
+    # polished episodes are planned before their Part number exists: the planner writes this token
+    desc = desc.replace("Part {PART}.", f"Part {part}.")
     probs = episodes.check_meta(title, desc)
     if probs:
         raise RuntimeError(f"{it['key']}: metadata breaks the rules {probs}")

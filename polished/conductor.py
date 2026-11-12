@@ -1,0 +1,628 @@
+"""Polished marathon episodes for ONE window of a Twitch VOD. Runs in GitHub Actions (polished.yml).
+
+    python -m polished.conductor --vod <id> --from <s> --to <s> [--final] [--upload] [--lane auto|modal|vast]
+                                 [--max-episodes N] [--state <dir>] [--answers <file>] --out out
+
+The same contract as the stream-copy cutter (clipbot/episodes.py), so the worker, the Discord cards
+and ep_publish.py do not change: it writes out/episodes.json, the workflow sends it to /clipbot/epoffer.
+
+1. LANE (real spend, read first): Modal while its month-to-date bill + this window's estimate stays
+   under MODAL_HANDOFF; else Vast.ai while its balance covers the job; else HOLD.
+2. ANALYSE the window in 30-min chunks on GPUs (Modal: in parallel; Vast: one box, in turn), each
+   fetching its own exact Twitch segments at 1920x1080. Saved to the state dir as they arrive.
+3. PLAN episodes one after another IN ORDER, each starting exactly at the last one's next_start
+   (plan_cut.py; one capped Claude call each, against the cloud budget). Nothing falls between two.
+4. RENDER every planned episode on GPUs while the episodes already back are gated, reviewed (Haiku
+   contact-sheet check) and uploaded PRIVATE (marker guard: never twice).
+5. POLISHED ONLY: an episode that fails a data gate or the review, or cannot be planned/reviewed for
+   lack of budget, is HELD: nothing from it onwards gets a card (Part order), the manifest is sent as
+   `partial` without next_from (the worker keeps the window and retries it after 6 h), and the owner
+   gets one line. A retry reuses everything in the state dir: no second analysis, no second plan call.
+"""
+import argparse
+import concurrent.futures as cf
+import hashlib
+import json
+import os
+import queue
+import shutil
+import subprocess
+import sys
+import threading
+import time
+import traceback
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.path.dirname(HERE)
+sys.path.insert(0, ROOT)
+from polished import ledger, stages  # noqa: E402
+
+CHUNK = 1800.0
+MODAL_HANDOFF = float(os.environ.get("GTA6_MODAL_HANDOFF") or 27.0)
+EST_PER_STREAM_H = {"modal": 0.75, "vast": 0.30}    # $ per stream-hour, conservative (T1: ~$0.38-0.54 on L4/A10 + egress)
+RENDER_PAR = 3
+MAX_EPISODES_PER_WINDOW = 30
+MARK = "clipbot:ep:"
+
+
+def log(*a):
+    print(time.strftime("%H:%M:%S"), *a, flush=True)
+
+
+def jdump(obj, path):
+    tmp = path + ".part"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(obj, f, ensure_ascii=False)
+    os.replace(tmp, path)
+
+
+def jload(path, default=None):
+    try:
+        return json.load(open(path, encoding="utf-8"))
+    except (OSError, ValueError):
+        return default
+
+
+class Run:
+    def __init__(self, a):
+        self.a = a
+        self.state = a.state
+        os.makedirs(self.state, exist_ok=True)
+        os.makedirs(a.out, exist_ok=True)
+        self.cost = {"modal": 0.0, "vast": 0.0, "api": 0.0}
+        self.modal_spent0 = None
+        self.api_spent0 = 0.0
+        self.notes = []
+        self.lane = None
+
+    # ------------------------------------------------------------------ money + lane
+    def api_budget(self):
+        return float(os.environ.get("GTA6_API_BUDGET") or 0.0)
+
+    def api_left_args(self):
+        return ["--budget-limit", "%.4f" % self.api_budget(), "--budget-spent", "%.4f" % (self.api_spent0 + self.cost["api"])]
+
+    def pick_lane(self, stream_h):
+        want = self.a.lane
+        why = []
+        if want in ("auto", "modal") and os.environ.get("MODAL_TOKEN_ID"):
+            try:
+                self.modal_spent0 = ledger.modal_spent()
+                est = stream_h * EST_PER_STREAM_H["modal"]
+                if self.modal_spent0 + est < MODAL_HANDOFF:
+                    log(f"lane modal: month-to-date ${self.modal_spent0:.2f} + this window ~${est:.2f} < ${MODAL_HANDOFF:.2f}")
+                    return "modal"
+                why.append(f"Modal at ${self.modal_spent0:.2f} of its ${MODAL_HANDOFF:.0f} hand-over mark")
+            except Exception as e:   # noqa: BLE001
+                why.append(f"Modal billing unreadable ({str(e)[:100]})")
+        elif want in ("auto", "modal"):
+            why.append("no Modal token in this job")
+        if want in ("auto", "vast") and os.environ.get("VAST_API_KEY"):
+            from polished import vast
+            try:
+                bal = vast.Vast().balance()
+                est = stream_h * EST_PER_STREAM_H["vast"]
+                if bal - est * 1.5 >= vast.MIN_BALANCE:
+                    log(f"lane vast: balance ${bal:.2f}, this window ~${est:.2f}")
+                    return "vast"
+                why.append(f"Vast balance ${bal:.2f} cannot cover ~${est:.2f}")
+            except Exception as e:   # noqa: BLE001
+                why.append(f"Vast unreadable ({str(e)[:100]})")
+        elif want in ("auto", "vast"):
+            why.append("no Vast key in this job")
+        raise Hold("no GPU lane can take this window: " + "; ".join(why))
+
+    # ------------------------------------------------------------------ analysis
+    def chunks(self, lo, hi):
+        out, t = [], lo
+        while t < hi - 1.0:
+            out.append((round(t, 3), round(min(hi, t + CHUNK), 3)))
+            t += CHUNK
+        return out
+
+    def analyse(self, vod, lo, hi, gpu):
+        todo, got = [], {}
+        for c in self.chunks(lo, hi):
+            p = os.path.join(self.state, "chunk_%d.json" % int(c[0]))
+            r = jload(p)
+            if r and abs(r["lo"] - c[0]) < 0.01:
+                got[c] = r
+            else:
+                todo.append(c)
+        log(f"analysis: {len(got)} chunk(s) reused from state, {len(todo)} to run on {self.lane}")
+        for c, r in gpu.analyze_many(vod, todo):
+            jdump(r, os.path.join(self.state, "chunk_%d.json" % int(c[0])))
+            got[c] = r
+            log(f"  chunk {c[0]:.0f}-{c[1]:.0f}: {len(r['segments'])} segments, {r['gpu']}, {r['timings'].get('total_s')} s")
+        an = stages.merge_chunks(list(got.values()))
+        jdump(an, os.path.join(self.state, "analysis.json"))
+        return an
+
+    # ------------------------------------------------------------------ planning
+    def plan_all(self, an, lo, final, vod_start):
+        """-> (plans in WINDOW seconds, next_from in VOD seconds or None, hold reason or None)."""
+        plans, start, hold = [], (None if vod_start else 0.0), None
+        idx = jload(os.path.join(self.state, "plans.json"), {}) or {}
+        answers = jload(self.a.answers, {}) if self.a.answers else {}
+        apath = os.path.join(self.state, "analysis.json")
+        for n in range(MAX_EPISODES_PER_WINDOW):
+            if self.a.max_episodes and len(plans) >= self.a.max_episodes:
+                break
+            key = "vodstart" if start is None else "%.3f" % start
+            ep_dir = os.path.join(self.state, "plan_%s" % key.replace(".", "_"))
+            os.makedirs(ep_dir, exist_ok=True)
+            done = idx.get(key)
+            if done and key not in (answers.get("plans") or {}) and (
+                    done["rc"] != 0 or os.path.exists(os.path.join(ep_dir, "plan.json"))) and done["rc"] != 3:
+                rc = done["rc"]
+            else:
+                cmd = [sys.executable, "-m", "polished.plan_cut", apath, ep_dir, "--game", self.a.series,
+                       "--brand", self.brand] + self.api_left_args()
+                cmd += ["--vod-start"] if start is None else ["--start", "%.3f" % start]
+                cmd += ["--final"] if final else []
+                ans = answers.get("plans", {}).get(key)
+                if ans:   # lane 4: a Claude session answered this prompt; validate it, no API call
+                    open(os.path.join(ep_dir, "plan_llm_session.json"), "w", encoding="utf-8").write(ans)
+                    cmd += ["--reuse-llm", os.path.join(ep_dir, "plan_llm_session.json")]
+                for f in ("plan.json", "tail.json", "hold.json"):
+                    if os.path.exists(os.path.join(ep_dir, f)):
+                        os.remove(os.path.join(ep_dir, f))
+                r = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True, encoding="utf-8")
+                print(r.stdout[-3000:], r.stderr[-2000:], flush=True)
+                rc = r.returncode
+                calls = jload(os.path.join(ep_dir, "llm_calls.json"), []) or []
+                self.cost["api"] += sum(c.get("cost", 0) for c in calls)
+                idx[key] = {"rc": rc}
+                jdump(idx, os.path.join(self.state, "plans.json"))
+            if rc == 0:
+                p = jload(os.path.join(ep_dir, "plan.json"))
+                p["_dir"] = ep_dir
+                plans.append(p)
+                nxt = float(p["next_start"])
+                if start is not None and nxt <= start + 1.0:
+                    raise RuntimeError(f"planner did not move forward ({start} -> {nxt})")
+                start = nxt
+                continue
+            if rc == 2:
+                t = jload(os.path.join(ep_dir, "tail.json"))
+                return plans, lo + float(t["next_start"]), None
+            if rc == 3:
+                h = jload(os.path.join(ep_dir, "hold.json"), {})
+                hold = f"planning at window second {key}: {h.get('why', 'held')}"
+                return plans, None, hold
+            raise RuntimeError(f"plan_cut failed (rc {rc}) at {key}")
+        # stopped by --max-episodes (tests) or the per-window cap: continue from the last end
+        return plans, (lo + start if start is not None else lo), None
+
+
+class Hold(RuntimeError):
+    pass
+
+
+# ---------------------------------------------------------------------- GPU lanes
+class ModalLane:
+    def __init__(self, run):
+        import modal
+        self.run = run
+        self.modal = modal
+        self.fa = modal.Function.from_name("gta6-polished", "analyze")
+        self.fr = modal.Function.from_name("gta6-polished", "render")
+        self.vol = modal.Volume.from_name("gta6-xfer", create_if_missing=True)
+
+    def _charge(self, rep, egress_gib=0.0):
+        self.run.cost["modal"] += ledger.modal_estimate(rep.get("gpu"), float(rep.get("container_s") or 0), egress_gib=egress_gib)
+
+    def analyze_many(self, vod, todo):
+        calls = {c: self.fa.spawn(vod, c[0], c[1]) for c in todo}
+        for c, fc in calls.items():
+            try:
+                r = fc.get(timeout=3600)
+            except Exception as e:   # noqa: BLE001 - one retry per chunk, then the window fails
+                log(f"  chunk {c[0]:.0f} failed once ({str(e)[:160]}); retrying")
+                r = self.fa.remote(vod, c[0], c[1])
+            self._charge(r)
+            yield c, r
+
+    def render_many(self, vod, jobs, sink, stop):
+        """jobs: [(key, plan_vod, title)]. Puts (key, local_mp4 | None, report | error) on sink, in order.
+        At most RENDER_PAR renders in flight; once `stop` is set (an episode was held) nothing new starts."""
+        b = self.run.ident
+        with cf.ThreadPoolExecutor(RENDER_PAR) as ex:
+            futs = []
+            pending = list(jobs)
+
+            def top_up():
+                while pending and len([f for _, f in futs if not f.done()]) < RENDER_PAR and not stop.is_set():
+                    k, p, t = pending.pop(0)
+                    futs.append((k, ex.submit(self.fr.remote, vod, p, t, self.run.a.series, b["brand"], b["login"], k)))
+            top_up()
+            i = 0
+            while i < len(futs):
+                k, f = futs[i]
+                i += 1
+                while not f.done():
+                    top_up()
+                    time.sleep(2)
+                top_up()
+                try:
+                    rep = f.result()
+                except Exception as e:   # noqa: BLE001
+                    sink.put((k, None, "render failed: %s" % str(e)[:300]))
+                    continue
+                dst = os.path.join(self.run.a.out, "%s.mp4" % k)
+                tmp = dst + ".part"
+                with open(tmp, "wb") as fh:
+                    for blk in self.vol.read_file("out/%s.mp4" % k):
+                        fh.write(blk)
+                if os.path.getsize(tmp) != rep["size"]:
+                    sink.put((k, None, "download size %d != %d" % (os.path.getsize(tmp), rep["size"])))
+                    continue
+                os.replace(tmp, dst)
+                if not rep.get("reused"):
+                    self._charge(rep, egress_gib=rep["size"] / 2 ** 30)
+                for f_ in ("out/%s.mp4" % k, "out/%s.json" % k):
+                    try:
+                        self.vol.remove_file(f_)
+                    except Exception:   # noqa: BLE001 - the sweep gets it
+                        pass
+                sink.put((k, dst, rep))
+                top_up()
+        sink.put(None)
+
+    def sweep(self, older_h=6):
+        try:
+            for e in self.vol.listdir("out"):
+                if time.time() - e.mtime > older_h * 3600:
+                    self.vol.remove_file(e.path)
+        except Exception:   # noqa: BLE001
+            pass
+
+
+class VastLane:
+    def __init__(self, run, stream_h):
+        from polished import vast
+        self.run, self.vast = run, vast
+        self.v = vast.Vast()
+        # downloads ~3.6 GB per stream-hour (8 Mbps) x 1.1 for chunk overlap + renders' own fetch; uploads = episodes
+        self.job = vast.Job(self.v, est_hours=stream_h * 0.9 + 0.3, down_gb=stream_h * 8.0, up_gb=stream_h * 3.5,
+                            label_suffix="-%s" % os.environ.get("GITHUB_RUN_ID", "local"))
+        self.host = None
+
+    def __enter__(self):
+        self.host = self.job.__enter__()
+        tar = os.path.join(self.job.dir, "repo.tgz")
+        subprocess.run(["tar", "czf", tar, "-C", ROOT, "polished", "clipbot/style/fonts", "fonts"], check=True)
+        self.host.run("mkdir -p /root/repo")
+        self.host.put(tar, "/root/repo.tgz")
+        self.host.run("cd /root/repo && tar xzf /root/repo.tgz && rm /root/repo.tgz")
+        t0 = time.time()
+        out = self.host.run("cd /root/repo && PY=/opt/conda/bin/python bash polished/setup_gpu.sh", timeout=1800)
+        log("  vast setup %.0f s: %s" % (time.time() - t0, " | ".join(out.strip().splitlines()[-3:])))
+        if "SETUP_DONE" not in out:
+            raise RuntimeError("vast setup did not finish")
+        return self
+
+    def __exit__(self, *exc):
+        self.run.cost["vast"] += self.job.spent()
+        return self.job.__exit__(*exc)
+
+    def _py(self, args, timeout):
+        return self.host.run("cd /root/repo && /opt/conda/bin/python -m polished.worker " + args, timeout=timeout)
+
+    def analyze_many(self, vod, todo):
+        for c in todo:
+            self.job.check_money()
+            rp = "/root/an_%d.json" % int(c[0])
+            self._py("analyze %s %.3f %.3f %s" % (vod, c[0], c[1], rp), timeout=3600)
+            loc = os.path.join(self.job.dir, "an.json")
+            self.host.get(rp, loc)
+            self.host.run("rm -f " + rp)
+            yield c, jload(loc)
+
+    def render_many(self, vod, jobs, sink, stop):
+        import shlex
+        b = self.run.ident
+        for k, p, t in jobs:
+            if stop.is_set():
+                break
+            try:
+                self.job.check_money()
+                pf = os.path.join(self.job.dir, "plan_%s.json" % k)
+                jdump(p, pf)
+                self.host.put(pf, "/root/plan_%s.json" % k)
+                od = "/root/ep_%s" % k
+                self._py("render %s /root/plan_%s.json %s %s %s %s %s" % (
+                    vod, k, shlex.quote(t), shlex.quote(self.run.a.series), shlex.quote(b["brand"]),
+                    shlex.quote(b["login"]), od), timeout=3600)
+                rep_l = os.path.join(self.job.dir, "rep_%s.json" % k)
+                self.host.get(od + "/report.json", rep_l)
+                rep = jload(rep_l)
+                dst = os.path.join(self.run.a.out, "%s.mp4" % k)
+                self.host.get(od + "/episode.mp4", dst)
+                if os.path.getsize(dst) != rep["size"]:
+                    raise RuntimeError("download size mismatch")
+                self.host.run("rm -rf %s/_work %s/episode.mp4" % (od, od))
+                sink.put((k, dst, rep))
+            except Exception as e:   # noqa: BLE001 - a later episode can't be offered past this one anyway
+                sink.put((k, None, "render failed: %s" % str(e)[:300]))
+                break
+        sink.put(None)
+
+
+class LocalLane:
+    """Lane 3: this machine's own GPU (the owner's laptop), same stages in-process. Explicit only.
+    Refuses while OBS runs (the owner is live) unless POLISHED_ALLOW_WHILE_LIVE=1, which is set only
+    after the Elgato-day load test passed AND the owner said yes. Pair with POLISHED_ARCHIVE (backlog)."""
+
+    def __init__(self, run):
+        from polished import backlog
+        if backlog.obs_live() and os.environ.get("POLISHED_ALLOW_WHILE_LIVE") != "1":
+            raise Hold("laptop lane refused: OBS is running (never render while live without a passed load test + OK)")
+        self.run = run
+
+    def analyze_many(self, vod, todo):
+        for c in todo:
+            t0 = time.time()
+            r = stages.analyze_chunk(vod, c[0], c[1], os.path.join(self.run.a.out, "_an_%d" % int(c[0])))
+            r["container_s"] = round(time.time() - t0, 1)
+            shutil.rmtree(os.path.join(self.run.a.out, "_an_%d" % int(c[0])), ignore_errors=True)
+            yield c, r
+
+    def render_many(self, vod, jobs, sink, stop):
+        from polished.brand import stings
+        b = self.run.ident
+        bdir = os.path.join(self.run.a.out, "_brand")
+        outro = None
+        for k, p, t in jobs:
+            if stop.is_set():
+                break
+            try:
+                if outro is None:
+                    outro = stings.outro(self.run.a.series, b["brand"], b["login"], bdir)
+                intro = stings.intro(t, self.run.a.series, b["brand"], b["login"], bdir)
+                mp4, rep = stages.render_episode(vod, p, intro, outro, os.path.join(self.run.a.out, "_ep_" + k))
+                dst = os.path.join(self.run.a.out, "%s.mp4" % k)
+                os.replace(mp4, dst)
+                rep["size"] = os.path.getsize(dst)
+                sink.put((k, dst, rep))
+            except Exception as e:   # noqa: BLE001
+                sink.put((k, None, "render failed: %s" % str(e)[:300]))
+                break
+        sink.put(None)
+
+
+# ---------------------------------------------------------------------- main
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--vod", required=True)
+    ap.add_argument("--from", dest="lo", type=float, default=0.0)
+    ap.add_argument("--to", dest="hi", type=float, default=0.0)
+    ap.add_argument("--final", action="store_true")
+    ap.add_argument("--series", default="GTA 6")
+    ap.add_argument("--upload", action="store_true")
+    ap.add_argument("--lane", default="auto", choices=["auto", "modal", "vast", "local"])
+    ap.add_argument("--max-episodes", type=int, default=0)
+    ap.add_argument("--keep", type=int, default=0, help="test: keep the first N rendered mp4s in out/ (upload=false)")
+    ap.add_argument("--state", default="state")
+    ap.add_argument("--answers", default="")
+    ap.add_argument("--out", default="out")
+    a = ap.parse_args()
+    from clipbot import common, episodes
+    run = Run(a)
+    run.ident = {"brand": common.BRAND, "login": common.LOGIN}
+    run.brand = common.BRAND
+    v = common.helix(f"videos?id={a.vod}")["data"][0]
+    total = episodes._secs(v["duration"])
+    lo, hi = a.lo, min(a.hi or total, total)
+    man = {"vod": a.vod, "vod_title": v["title"], "vod_created": v["created_at"], "series": a.series,
+           "window": [lo, hi], "final": a.final, "polished": True, "episodes": [], "holes": []}
+    mpath = os.path.join(a.out, "episodes.json")
+    t_run = time.time()
+    try:
+        run.api_spent0 = ledger.api_spent(since=os.environ.get("GTA6_API_SINCE") or "2026-11-01") if os.environ.get("GITHUB_TOKEN") else 0.0
+    except Exception as e:   # noqa: BLE001 - unreadable ledger = assume the worst: the budget is spent
+        run.api_spent0 = run.api_budget()
+        run.notes.append("API ledger unreadable (%s): treated as spent" % str(e)[:80])
+    log(f"VOD {a.vod} window {lo:.0f}-{hi:.0f}{' FINAL' if a.final else ''}; cloud API ${run.api_spent0:.3f} of ${run.api_budget():.2f}")
+    if hi - lo < 60 and not a.final:
+        man["next_from"] = lo
+        jdump(man, mpath)
+        return 0
+    hold = None
+    try:
+        run.lane = "local" if a.lane == "local" else run.pick_lane((hi - lo) / 3600)
+        man["lane"] = run.lane
+        if run.lane == "local":
+            ctx = _null(LocalLane(run))
+        elif run.lane == "modal":
+            lane_cm = ModalLane(run)
+            lane_cm.sweep()
+            ctx = _null(lane_cm)
+        else:
+            ctx = VastLane(run, (hi - lo) / 3600)
+        with ctx as gpu:
+            an = run.analyse(a.vod, lo, hi, gpu)
+            plans, next_from, hold = run.plan_all(an, lo, a.final, vod_start=(lo < 1.0))
+            log(f"planned {len(plans)} episode(s); next window from {next_from}; hold: {hold}")
+            hold = process(run, gpu, an, plans, lo, man, common, episodes) or hold
+            if hold is None:
+                man["next_from"] = round(next_from if next_from is not None else hi, 3)
+    except Hold as h:
+        hold = str(h)
+    except Exception as e:   # noqa: BLE001 - reported, then the job fails so the worker retries the window
+        traceback.print_exc()
+        man["error"] = str(e)[:500]
+        jdump(man, mpath)
+        finish(run, man, t_run)
+        raise
+    if hold:
+        man["partial"] = True
+        man.pop("next_from", None)
+        man["held"] = hold
+        tell(common, f"episodes {a.vod} window {int(lo)}", f"Polished episodes HELD at {hold}. "
+             "Nothing after it gets a card until it is fixed (ask Claude: polished hold).")
+    jdump(man, mpath)
+    finish(run, man, t_run)
+    return 0
+
+
+class _null:
+    def __init__(self, x):
+        self.x = x
+
+    def __enter__(self):
+        return self.x
+
+    def __exit__(self, *e):
+        return False
+
+
+def tell(common, ident, line):
+    log("OWNER:", line)
+    try:
+        common.worker("/clipbot/failed", {"id": ident, "error": line, "note": True})
+    except Exception as e:   # noqa: BLE001
+        log("could not tell the owner:", str(e)[:120])
+
+
+def finish(run, man, t_run):
+    man["cost"] = {k: round(v, 4) for k, v in run.cost.items()}
+    man["wall_s"] = round(time.time() - t_run, 1)
+    man["notes"] = run.notes
+    jdump(man, os.path.join(run.a.out, "episodes.json"))
+    name = ledger.ledger_name(os.environ.get("GITHUB_RUN_ID", 0), os.environ.get("GITHUB_RUN_ATTEMPT", 0),
+                              run.cost["api"], run.cost["modal"], run.cost["vast"])
+    open(os.path.join(run.a.out, "ledger_name.txt"), "w").write(name)
+    log("cost this run:", man["cost"], "->", name)
+
+
+def holes_of(plan_vod):
+    ks = plan_vod["keep"]
+    return [[round(x[1], 2), round(y[0], 2)] for x, y in zip(ks, ks[1:]) if y[0] - x[1] > 0.05]
+
+
+def process(run, gpu, an, plans, lo, man, common, episodes):
+    """Render, gate, review, upload IN ORDER. Returns a hold reason or None."""
+    a = run.a
+    jobs, meta = [], {}
+    for i, p in enumerate(plans, 1):
+        pv = {"keep": [[round(s + lo, 3), round(e + lo, 3)] for s, e in p["keep"]],
+              "cold": [round(p["cold"][0] + lo, 3), round(p["cold"][1] + lo, 3)]}
+        key = hashlib.sha1(json.dumps([a.vod, pv, p["title"], run.brand, a.series]).encode()).hexdigest()[:16]
+        start, end = round(p["bounds"][0] + lo, 2), round(p["bounds"][1] + lo, 2)
+        meta[key] = {"i": i, "plan": p, "pv": pv, "start": start, "end": end}
+        jobs.append((key, pv, p["title"]))
+    if not jobs:
+        return None
+    if a.upload:
+        common.channel_gate()
+    # already up (a retry): never render or upload twice
+    todo = []
+    for key, pv, t in jobs:
+        m = meta[key]
+        m["marker"] = f"{MARK}{a.vod}:{int(m['start'])}"
+        if a.upload:
+            have = episodes.marker_on_channel(m["marker"])
+            if have:
+                log(f"  ep {m['i']}: already on YouTube as {have}")
+                m["video"] = have
+                continue
+        todo.append((key, pv, t))
+    sink, stop = queue.Queue(), threading.Event()
+    th = threading.Thread(target=gpu.render_many, args=(a.vod, todo, sink, stop), daemon=True)
+    th.start()
+    ready = {}
+    hold = None
+    kept_n = 0
+    for key, pv, t in jobs:
+        m = meta[key]
+        if "video" not in m:
+            while key not in ready:
+                item = sink.get(timeout=4 * 3600)
+                if item is None:
+                    break
+                ready[item[0]] = item
+            got = ready.get(key)
+            if not got or got[1] is None:
+                hold = f"episode {m['i']} ({m['start']:.0f}s): {got[2] if got else 'never rendered'}"
+                break
+            _, mp4, rep = got
+            g = rep.get("gates", {})
+            if not g.get("pass"):
+                hold = f"episode {m['i']} ({m['start']:.0f}s): data gate failed (verify rc {g.get('verify_rc')}, A/V {g.get('av_sync')})"
+                break
+            rv = review(run, an, m, mp4)
+            m["review"] = rv
+            if rv.get("verdict") != "pass":
+                hold = f"episode {m['i']} ({m['start']:.0f}s): review {rv.get('verdict')}: " + \
+                    "; ".join(x.get("what", "") for x in rv.get("issues", []) if x.get("severity") == "blocker")[:300]
+                break
+            m["report"] = {k: rep.get(k) for k in ("duration", "expected", "gpu", "encoder", "timings", "size")}
+            if a.upload:
+                title, desc = draft_copy(run, m, episodes)
+                vid = episodes.upload_private(mp4, title, desc, episodes.tags_for(a.series))
+                m["video"] = vid
+                log(f"  ep {m['i']}: uploaded PRIVATE https://youtu.be/{vid}")
+            if kept_n < a.keep and not a.upload:
+                kept_n += 1
+                shutil.move(mp4, os.path.join(a.out, "keep_ep%02d.mp4" % m["i"]))
+            elif os.path.exists(mp4):
+                os.remove(mp4)
+        p = m["plan"]
+        ep = {"i": m["i"], "start": m["start"], "end": m["end"], "spans": m["pv"]["keep"], "cold": m["pv"]["cold"],
+              "kept": round(sum(e - s for s, e in m["pv"]["keep"]), 1), "marker": m["marker"],
+              "hook": p["title"], "description": p["description"], "hashtags": [],
+              "draft_title": p["youtube_title"], "chapters": p["chapters"], "review": m.get("review", {}).get("verdict"),
+              "plan_problems": p["stats"].get("problems", []), "report": m.get("report")}
+        if m.get("video"):
+            ep["video"] = m["video"]
+        man["episodes"].append(ep)
+        man["holes"] += holes_of(m["pv"])
+        jdump(man, os.path.join(a.out, "episodes.json"))
+    if hold:
+        stop.set()
+    th.join(timeout=60 if not hold else 900)
+    return hold
+
+
+def draft_copy(run, m, episodes):
+    """Private-upload copy until approval sets the real Part number (ep_publish rewrites both)."""
+    p = m["plan"]
+    title = episodes.title_for(run.a.series, "?", p["title"]).replace("Part ?", "(draft)")
+    desc = episodes.description_for(p["description"].replace("Part {PART}.", "").strip(), [], m["marker"])
+    return title, desc
+
+
+def review(run, an, m, mp4):
+    wd = os.path.join(run.state, "review_%s" % hashlib.sha1(m["marker"].encode()).hexdigest()[:10])
+    os.makedirs(wd, exist_ok=True)
+    old = jload(os.path.join(wd, "review.json"))
+    if old and old.get("mp4_size") == os.path.getsize(mp4):
+        return old
+    answers = jload(run.a.answers, {}) if run.a.answers else {}
+    sess = (answers.get("reviews") or {}).get(m["marker"])
+    if sess:   # lane 4: a Claude session looked at these sheets and gave the verdict
+        sess = dict(sess, lane="claude-session", mp4_size=os.path.getsize(mp4))
+        jdump(sess, os.path.join(wd, "review.json"))
+        return sess
+    jdump(m["plan"], os.path.join(wd, "plan.json"))
+    shutil.copy(os.path.join(run.state, "analysis.json"), os.path.join(wd, "analysis.json"))
+    r = subprocess.run([sys.executable, "-m", "polished.review", mp4, wd, "--brand", run.brand] + run.api_left_args(),
+                       cwd=ROOT, capture_output=True, text=True, encoding="utf-8")
+    print(r.stdout[-2500:], r.stderr[-1500:], flush=True)
+    calls = jload(os.path.join(wd, "review_calls.json"), []) or []
+    run.cost["api"] += sum(c.get("cost", 0) for c in calls)
+    if r.returncode == 3:
+        h = jload(os.path.join(wd, "review_hold.json"), {})
+        return {"verdict": "hold", "issues": [{"severity": "blocker", "what": h.get("why", "review held")}]}
+    if r.returncode:
+        return {"verdict": "hold", "issues": [{"severity": "blocker", "what": "review crashed rc %d" % r.returncode}]}
+    res = jload(os.path.join(wd, "review.json"), {})
+    res["mp4_size"] = os.path.getsize(mp4)
+    jdump(res, os.path.join(wd, "review.json"))
+    os.remove(os.path.join(wd, "analysis.json"))
+    return res
+
+
+if __name__ == "__main__":
+    sys.exit(main())
