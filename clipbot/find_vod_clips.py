@@ -378,6 +378,12 @@ def choose(cands, wav, dur, stream_title, n_pick, words, ask=None):
             take(c, *snap(ws, b[0], b[1], dur), ws, c["judge"]["title"])
         print(f"{len(out)} candidates clear the floor {judge.FLOOR} with no veto: "
               + ", ".join(f"{c['s']:.0f}s rank {judge.rank(c):.2f}" for c, _ in out))
+        # Titles: the live ranker's prompt (first-person hooks, tuned 10-29) over the re-heard text, which no longer
+        # titles mishearings. The judge's own title is the fallback, a quote the last resort (main()).
+        head = list(range(min(5, len(out))))
+        for i, t in (rerank([out[k][0] for k in head], stream_title, len(head)) or []) if head else []:
+            if t:
+                out[i] = (out[i][0], t)
         return out
     # judge down: the old AI ranker, only over stretches above the heuristic floor
     strong = [c for c in cands if c["score"] >= judge.FALLBACK_FLOOR or chat.boost(*c.get("chat", (0, 0))) >= 0.8]

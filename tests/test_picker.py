@@ -251,3 +251,12 @@ class Chat(unittest.TestCase):
         c = {"score": 16.0, "judge": {"score": 4, "who": "streamer", "kind": "reaction"}}
         self.assertLess(j.rank(c), j.FLOOR)
         self.assertGreater(j.rank({**c, "chat": (2, 1)}), j.FLOOR)
+
+
+class Titles(unittest.TestCase):
+    def test_titles_about_him_are_dropped(self):
+        cs = [{"s": 100.0, "e": 120.0, "region": (80.0, 135.0), "words": [], "score": 10.0}] * 2
+        v = j.parse({"judged": [{"i": 0, "score": 6, "title": "Streamer Announces Enemies Are Down"},
+                                {"i": 1, "score": 6, "title": "I Barely Escaped The Game Swallowing Me"}]}, cs)
+        self.assertEqual(v[0]["title"], "")
+        self.assertEqual(v[1]["title"], "I Barely Escaped The Game Swallowing Me")

@@ -98,10 +98,13 @@ def prompt(cands, stream_title):
         "The clip must make sense to someone who did not watch the stream.",
         '- "end": seconds where the clip ends: right after the payoff and the reaction or laugh finish, at the end of a '
         "sentence, never mid-line. Aim for 15-45 s between start and end.",
-        '- "title" (for EVERY candidate): the on-screen hook, max 50 characters, Title Case. Say what HAPPENS, using only '
-        "what the transcript clearly shows (the specific thing: the car, the cops, the boss, the teammate). First person "
-        "when it happens to the streamer. If the transcript is too unclear to say what happens, use the streamer's clearest "
-        "line as a quote instead. Never invent events, never give away the punchline. No emojis, hashtags, swearing or em dashes.",
+        '- "title" (for EVERY candidate): the on-screen hook a stranger reads before deciding to keep watching, max 50 '
+        "characters, Title Case. Written AS the streamer, in the first person, never about him: never the words "
+        '"streamer", "he" or "the player". Say what HAPPENS, using only what the transcript clearly shows (the specific '
+        'thing: the car, the cops, the boss, the teammate). Good: "I Drank The Gas Instead Of Filling The Car", '
+        '"The Cops Showed Up At The Worst Possible Time", "Why Is This Dog Built Like That". If the transcript is too '
+        "unclear to say what happens, use his clearest short line as a quote instead. Create curiosity, never give away "
+        "the punchline, never invent events. No emojis, hashtags, swearing or em dashes.",
         "",
         'Reply with JSON only, one entry per candidate: {"judged":[{"i":0,"score":7,"who":"streamer","kind":"fail",'
         '"start":4.0,"end":31.5,"title":"..."}]}',
@@ -147,6 +150,8 @@ def parse(resp, cands):
         if st is not None and en is not None and 0 <= st < en <= hi - lo + 1:
             bounds = (lo + st, min(hi, lo + en))
         title = re.sub(r"\s+", " ", str(j.get("title") or "")).strip().strip('"').replace("—", ",").replace("–", "-")
+        if re.search(r"(?i)\b(streamer|the player)\b", title):
+            title = ""                               # written about him, not as him (6 Nov test): the ranker/quote titles it
         kind = str(j.get("kind") or "").lower().strip()
         out[i] = {"score": score, "who": str(j.get("who") or "").lower().strip(),
                   "kind": kind if kind in KINDS else "", "bounds": bounds,
