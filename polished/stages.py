@@ -142,6 +142,16 @@ MENU_PROMPTS = [
     "a matchmaking or results screen in a video game",
     "a black screen",
 ]
+# The stream's OWN scenes (starting soon, be right back, ending, the 24/7 resting screen) are never
+# episode content (T3 12 Nov: a 9-min STARTING SOON countdown sat in Part 1). Scored in their own softmax
+# against menu + gameplay, so the menu score tuned in T1/T2 does not move.
+SCENE_PROMPTS = [
+    "a livestream starting soon screen with a countdown timer",
+    "a livestream be right back screen",
+    "a livestream stream ending screen saying thanks for watching",
+    "a cozy animated campfire waiting screen for a livestream",
+    "a livestream waiting screen with big text and music playing",
+]
 PLAY_PROMPTS = [
     "first-person shooter gameplay",
     "third-person gameplay of a character in a game world",
@@ -163,8 +173,9 @@ def menu_map(src, ss, t, t0):
     tok = open_clip.get_tokenizer("ViT-B-32")
     rows = []
     with torch.no_grad():
-        te = model.encode_text(tok(MENU_PROMPTS + PLAY_PROMPTS).to(dev))
+        te = model.encode_text(tok(MENU_PROMPTS + PLAY_PROMPTS + SCENE_PROMPTS).to(dev))
         te = te / te.norm(dim=-1, keepdim=True)
+        n_mp = len(MENU_PROMPTS) + len(PLAY_PROMPTS)
         for k0 in range(0, int(np.ceil(t)), 600):          # 10 min of frames at a time (bounded memory)
             seg = min(600.0, t - k0)
             raw = subprocess.run([FF, "-v", "error", "-ss", "%.3f" % (ss + k0), "-i", src, "-t", "%.3f" % seg, "-an",
@@ -175,9 +186,12 @@ def menu_map(src, ss, t, t0):
                 x = torch.stack([pre(Image.fromarray(f)) for f in fr[k:k + 256]]).to(dev)
                 ie = model.encode_image(x)
                 ie = ie / ie.norm(dim=-1, keepdim=True)
-                p = (100.0 * ie @ te.T).softmax(-1)[:, :len(MENU_PROMPTS)].sum(-1).cpu().numpy()
+                lg = 100.0 * ie @ te.T
+                p = lg[:, :n_mp].softmax(-1)[:, :len(MENU_PROMPTS)].sum(-1).cpu().numpy()
+                q = lg.softmax(-1)[:, n_mp:].sum(-1).cpu().numpy()
                 base = len(rows)
-                rows += [{"t": round(t0 + (base + i) / MENU_FPS, 2), "menu": round(float(v), 3)} for i, v in enumerate(p)]
+                rows += [{"t": round(t0 + (base + i) / MENU_FPS, 2), "menu": round(float(v), 3), "scene": round(float(w), 3)}
+                         for i, (v, w) in enumerate(zip(p, q))]
     del model
     if dev == "cuda":
         torch.cuda.empty_cache()

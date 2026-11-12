@@ -67,6 +67,12 @@ STATIC_GAP_MIN = 8.0     # a wordless stretch this long inside a still screen is
 LEAD_BLACK = 8.0         # luma under this right after the sting is a load fade: cut it
 MENU_TH, MENU_SMOOTH, MENU_MIN, MENU_BRIDGE, MENU_MAX_DIFF = 0.6, 5, 30.0, 10.0, 5.0
 MENU_MAX_SPEECH = 0.40   # WD2 T2: a 45 s controls screen cut at 51% speech (his riff); story screen kept at 37%
+# T3 12 Nov: a 9-min STARTING SOON countdown (menu 0.97, still, 9% speech) was a candidate the model left
+# in, and the reviewer held Part 1. A long, still, near-silent menu-like screen is cut by CODE; and the
+# stream's own scenes (CLIP "scene" score: starting soon / be right back / ending / resting) are cut
+# whatever is said over them.
+QUIET_MENU_MIN, QUIET_MENU_SPEECH = 60.0, 0.15
+SCENE_TH, SCENE_MIN, SCENE_KEEP = 0.5, 30.0, 1.0
 BOUND_GAP, BOUND_CLEAR = 3.0, 1.5
 MIN_EP, MAX_EP = 900.0, 1500.0
 AWAY_MIN, AWAY_KEEP = 20 * 60.0, 2.0     # episodes.py AWAY_MIN: 20 min without a word = nobody there
@@ -240,7 +246,23 @@ def main():
             # death/glitch effect 21 also read as "menu" to CLIP, so motion vetoes those
             sel = (vtt >= x) & (vtt <= y)
             if y - x >= MENU_MIN and sel.any() and float(np.median(vdd[sel])) < MENU_MAX_DIFF:
-                menu_cands.append([x + STATIC_HEAD, y + 1.0 - TAIL, "menu"])
+                if y - x >= QUIET_MENU_MIN and speech_frac(x, y) <= QUIET_MENU_SPEECH:
+                    vcuts.append([x + 1.0, y + 1.0 - TAIL, "menu-quiet"])     # code cut, no ruling needed
+                else:
+                    menu_cands.append([x + STATIC_HEAD, y + 1.0 - TAIL, "menu"])
+        # the stream's own scenes: cut whole, whatever is said over them
+        if any("scene" in r for r in menu):
+            ss_ = np.convolve(np.array([r.get("scene", 0.0) for r in menu]), np.ones(MENU_SMOOTH) / MENU_SMOOTH, "same")
+            cur = None
+            for t_, v_ in list(zip(mt, ss_)) + [(mt[-1] + 1, 0.0)]:
+                if v_ > SCENE_TH and cur is None:
+                    cur = [t_, t_]
+                elif v_ > SCENE_TH:
+                    cur[1] = t_
+                elif cur is not None:
+                    if cur[1] - cur[0] >= SCENE_MIN:
+                        vcuts.append([cur[0] + SCENE_KEEP, cur[1] + 1.0 - SCENE_KEEP, "scene"])
+                    cur = None
     else:
         print("NOTE: no menu map in the analysis - animated menus will NOT be cut")
     # ⚠️ MENU RUNS ARE CANDIDATES, NOT CUTS. WD2 test: CLIP + low motion flagged 104 s of the

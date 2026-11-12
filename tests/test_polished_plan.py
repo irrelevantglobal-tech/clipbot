@@ -238,3 +238,39 @@ class QualityFixes(unittest.TestCase):
         self.assertTrue(os.path.exists(os.path.join(out, "f.png")))
         self.assertIn("A CLEAN TITLE", stings.DRAWN)
         self.assertIn("OWNERBRAND", stings.DRAWN)
+
+
+class StreamScenes(unittest.TestCase):
+    """T3 12 Nov: a 9-min STARTING SOON countdown was kept in Part 1 (menu candidate, model left it in)."""
+
+    def setUp(self):
+        self.d = tempfile.mkdtemp()
+
+    def tearDown(self):
+        shutil.rmtree(self.d, ignore_errors=True)
+
+    def run_plan(self, an, *args):
+        ap = os.path.join(self.d, "an.json")
+        json.dump(an, open(ap, "w"))
+        r = plan(ap, os.path.join(self.d, "w"), "--no-llm", *args)
+        self.assertEqual(r.returncode, 0, r.stdout[-600:])
+        return json.load(open(os.path.join(self.d, "w", "plan.json"), encoding="utf-8"))
+
+    def test_quiet_starting_screen_is_cut_by_code(self):
+        an = synth(3600)
+        # 0-560 s: still countdown card, menu-like, only a few words
+        an["transcript"]["segments"] = [s for s in an["transcript"]["segments"] if s["s"] >= 560 or s["s"] % 60 < 1.3]
+        an["menu"] = [{"t": float(t), "menu": 0.97 if t < 560 else 0.05, "scene": 0.0} for t in range(3600)]
+        for v in an["visual"]:
+            if v["t"] < 560:
+                v["diff"] = 1.3
+        p = self.run_plan(an, "--vod-start")
+        self.assertGreaterEqual(p["keep"][0][0], 555.0, p["keep"][:2])
+
+    def test_stream_scene_is_cut_even_when_he_talks_over_it(self):
+        an = synth(3600)
+        an["menu"] = [{"t": float(t), "menu": 0.1, "scene": 0.9 if 1000 <= t < 1300 else 0.02} for t in range(3600)]
+        p = self.run_plan(an, "--start", "0")
+        kept_in_scene = sum(max(0, min(e, 1295) - max(s, 1005)) for s, e in p["keep"])
+        self.assertEqual(kept_in_scene, 0)
+        self.assertIn("scene", {c[2] for c in p["cuts"]})
