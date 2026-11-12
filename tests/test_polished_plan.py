@@ -177,3 +177,64 @@ class Merge(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class QualityFixes(unittest.TestCase):
+    """12 Nov quality-session fixes, ported: static-gap cut, load-fade black cut at the start (start stays
+    chained), cold-open chapter label repeat, and the stings' retired-name guard."""
+
+    def setUp(self):
+        self.d = tempfile.mkdtemp()
+
+    def tearDown(self):
+        shutil.rmtree(self.d, ignore_errors=True)
+
+    def test_wordless_stretch_inside_a_talked_over_still_screen_is_cut(self):
+        an = synth(3600)
+        # a 30 s still screen at 600-630 s where he talks only at the end: words removed 600-624
+        segs = [s for s in an["transcript"]["segments"] if not (600 <= s["s"] < 624)]
+        an["transcript"]["segments"] = segs
+        an["static"]["runs"] = [[600.0, 630.0]]
+        ap = os.path.join(self.d, "an.json")
+        json.dump(an, open(ap, "w"))
+        r = plan(ap, os.path.join(self.d, "w"), "--no-llm", "--start", "0")
+        self.assertEqual(r.returncode, 0, r.stdout[-600:])
+        p = json.load(open(os.path.join(self.d, "w", "plan.json"), encoding="utf-8"))
+        kinds = {c[2] for c in p["cuts"] if c[0] < 640 and c[1] > 590}
+        self.assertIn("static-gap", kinds)
+
+    def test_load_fade_at_the_start_is_cut_but_the_start_stays_chained(self):
+        an = synth(3600)
+        an["transcript"]["segments"] = [s for s in an["transcript"]["segments"] if not 1197 <= s["s"] < 1206]
+        for v in an["visual"]:
+            if 1200.5 <= v["t"] < 1205:
+                v["luma"] = 2.0
+        ap = os.path.join(self.d, "an.json")
+        json.dump(an, open(ap, "w"))
+        r = plan(ap, os.path.join(self.d, "w"), "--no-llm", "--start", "1200")
+        self.assertEqual(r.returncode, 0, r.stdout[-600:])
+        p = json.load(open(os.path.join(self.d, "w", "plan.json"), encoding="utf-8"))
+        self.assertEqual(p["bounds"][0], 1200.0)                       # chained start kept
+        self.assertGreaterEqual(p["keep"][0][0], 1204.9)               # the black is not in the episode
+        self.assertTrue(any("load fade" in x for x in p["stats"]["problems"]))
+
+    def test_sting_refuses_a_retired_name_before_any_frame(self):
+        import _ident
+        from polished.brand import stings
+        out = os.path.join(self.d, "b")
+        with self.assertRaises(SystemExit):
+            stings.setup("GTA 6", _ident.OLD, "ownerlogin", out, retired=[_ident.OLD])
+        with self.assertRaises(SystemExit):
+            stings.setup("GTA 6", "OwnerBrand", "ownerlogin", out, retired=[])   # identity fallback has OLD
+            stings.ws.make_intro(None, "the " + " ".join(_ident.OLD) + " heist", frame_png=os.path.join(out, "f.png"))
+        self.assertFalse(os.path.exists(os.path.join(out, "f.png")))
+
+    def test_sting_logs_clean_strings(self):
+        from polished.brand import stings
+        out = os.path.join(self.d, "c")
+        stings.DRAWN.clear()
+        stings.setup("GTA 6", "OwnerBrand", "ownerlogin", out, retired=["OldName"])
+        stings.ws.make_intro(None, "A clean title", frame_png=os.path.join(out, "f.png"))
+        self.assertTrue(os.path.exists(os.path.join(out, "f.png")))
+        self.assertIn("A CLEAN TITLE", stings.DRAWN)
+        self.assertIn("OWNERBRAND", stings.DRAWN)

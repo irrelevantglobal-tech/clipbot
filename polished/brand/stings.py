@@ -11,7 +11,9 @@ the channel identity), never written here: the repo is public.
     python -m polished.brand.stings frames "<title>" ...      # one intro + one outro frame, no encode
 """
 import argparse
+import json
 import os
+import re
 import sys
 
 from PIL import Image, ImageDraw, ImageFont
@@ -43,10 +45,65 @@ def wordmark_png(text, path, height=400):
     return path
 
 
-def setup(game, brand, login, out):
+DRAWN = []
+
+
+def squash(x):
+    return re.sub(r"[^a-z0-9]", "", str(x).lower())
+
+
+def _retired(retired):
+    """Retired channel names, squashed (letters+digits, lower case) so spacing, dots or tracking can't hide
+    one. Passed in by the caller (GPU hosts have no identity secret); else read from the identity here.
+    (Quality session 12 Nov: the 10-30 GTA outro carried the old name.)"""
+    if retired:
+        return [n for n in (squash(x) for x in retired) if n]
+    try:
+        sys.path.insert(0, os.path.dirname(os.path.dirname(HERE)))
+        from clipbot import common
+        return [n for n in (squash(x) for x in common.IDENT.get("legacy", [])) if n]
+    except SystemExit:
+        return []
+
+
+def _guard(text, retired):
+    sq = squash(text)
+    if any(n in sq for n in retired):
+        raise SystemExit("refusing to draw a retired channel name into a sting")
+    DRAWN.append(str(text))
+
+
+def _install_guard(out, retired):
+    """Every caption the stings draw goes through brandkit._text_mask; the game mark through wordmark_png
+    (checked in setup). A retired name stops the render before a single frame is written, and every
+    drawn string is saved to <out>/_drawn.json as proof."""
+    retired = _retired(retired)
+    if not retired:
+        raise SystemExit("no retired-name list in the channel identity: refusing to render unchecked")
+    bk = ws.bk
+    if not getattr(bk._text_mask, "_guarded", False):
+        orig = bk._text_mask
+
+        def checked(text, *a, **k):
+            _guard(text, checked.retired)
+            return orig(text, *a, **k)
+        checked._guarded = True
+        bk._text_mask = checked
+    bk._text_mask.retired = retired
+    return retired
+
+
+def _save_drawn(out):
+    json.dump(sorted(set(DRAWN)), open(os.path.join(out, "_drawn.json"), "w", encoding="utf-8"), indent=0)
+
+
+def setup(game, brand, login, out, retired=None):
     if not brand or not login:
         raise SystemExit("stings need --brand and --login (from the channel identity)")
     os.makedirs(out, exist_ok=True)
+    retired = _install_guard(out, retired)
+    for t in (game, brand, login):
+        _guard(t, retired)
     tag = "".join(c for c in game.lower() if c.isalnum()) or "game"
     ws.OUT = out
     ws.BRAND_TEXT = brand.upper()
@@ -55,18 +112,21 @@ def setup(game, brand, login, out):
     return tag
 
 
-def intro(title, game, brand, login, out):
+def intro(title, game, brand, login, out, retired=None):
     """-> path of a 4.6 s intro with the title and no Part number."""
-    tag = setup(game, brand, login, out)
+    tag = setup(game, brand, login, out, retired)
     p = ws.make_intro(None, title)
+    _save_drawn(out)
     dst = os.path.join(out, "%s_intro_%s.mp4" % (tag, os.getpid()))
     os.replace(p, dst)
     return dst
 
 
-def outro(game, brand, login, out):
-    tag = setup(game, brand, login, out)
-    return ws.make_outro(out_name="%s_outro.mp4" % tag)
+def outro(game, brand, login, out, retired=None):
+    tag = setup(game, brand, login, out, retired)
+    o = ws.make_outro(out_name="%s_outro.mp4" % tag)
+    _save_drawn(out)
+    return o
 
 
 def main():

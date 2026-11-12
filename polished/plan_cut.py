@@ -63,6 +63,8 @@ SENT_GAP, SENT_REACH = 0.6, 6.0   # menu-cut edges move inward to a >= 0.6 s wor
 LONG_GAP, LONG_KEEP = 12.0, 0.9
 BLACK_Y, BLACK_MIN, BLACK_HEAD = 8.0, 12.0, 10.0
 STATIC_DIFF, STATIC_MIN, STATIC_HEAD, VIS_MAX_SPEECH = 1.2, 15.0, 4.0, 0.15
+STATIC_GAP_MIN = 8.0     # a wordless stretch this long inside a still screen is cut anyway
+LEAD_BLACK = 8.0         # luma under this right after the sting is a load fade: cut it
 MENU_TH, MENU_SMOOTH, MENU_MIN, MENU_BRIDGE, MENU_MAX_DIFF = 0.6, 5, 30.0, 10.0, 5.0
 MENU_MAX_SPEECH = 0.40   # WD2 T2: a 45 s controls screen cut at 51% speech (his riff); story screen kept at 37%
 BOUND_GAP, BOUND_CLEAR = 3.0, 1.5
@@ -196,6 +198,17 @@ def main():
     for x, y, *_ in merge([list(r)[:2] for r in st_runs]):
         if speech_frac(x, y) <= VIS_MAX_SPEECH and y - TAIL - (x + STATIC_HEAD) >= 2.0:
             vcuts.append([x + STATIC_HEAD, y - TAIL, "static"])
+        else:
+            # He talks in part of the still screen, so the whole run is protected; but a long
+            # WORDLESS stretch inside it is still dead air (12 Nov, Cyberpunk: 17 s on a silent
+            # "Call Vehicle" menu, kept because he spoke in the last 4 s of a 22 s run; quality
+            # session's fix). Cut only between words, keeping a beat either side.
+            inner = [w for w in words if x - 1.0 < w[1] and w[0] < y + 1.0]
+            pts = [x] + [t for w in inner for t in (w[0], w[1])] + [y]
+            for g0, g1 in zip(pts[0::2], pts[1::2]):   # (x, w1.s), (w1.e, w2.s), ..., (wn.e, y)
+                g0, g1 = max(g0, x), min(g1, y)
+                if g1 - g0 >= STATIC_GAP_MIN:
+                    vcuts.append([g0 + 1.0, g1 - 0.5, "static-gap"])
     # MENUS (CLIP zero-shot, cloud_episode.menu_map): "a menu is never content" (kit README),
     # even with commentary over it. Short menus (inventory flashes, a quick map check) stay:
     # only a run >= MENU_MIN of smoothed P(menu) > MENU_TH is cut, keeping a 4 s head so the
@@ -315,6 +328,26 @@ def main():
             sys.exit("ABORT: no legal start boundary (word gap >= 3 s) in the first 4 minutes")
         start = head_gaps[0]["t"]
 
+    # A load fade right after the sting reads as a glitch (12 Nov: 0.5 s of title screen, then 3.5 s
+    # of black; quality session). Black starting within 2 s of the start is CUT (not skipped: the
+    # start stays where the last episode ended, so nothing between two episodes is lost), never
+    # past a spoken word.
+    lead_note = None
+    first_w = min([w[0] for w in words if w[0] >= start] or [start + 15.0])
+    blk = [v["t"] for v in vis if start <= v["t"] <= start + 15.0 and v["luma"] < LEAD_BLACK]
+    if blk and blk[0] - start <= 2.0:
+        t_end = blk[0]
+        for v in vis:
+            if v["t"] < blk[0]:
+                continue
+            if v["luma"] >= LEAD_BLACK:
+                break
+            t_end = v["t"] + 0.5
+        t_end = min(t_end, first_w - 0.1)
+        if t_end - start >= 1.0:
+            lead_note = "load fade cut %.2f -> %.2f" % (start, t_end)
+            cuts = merge(cuts + [[start, round(t_end, 2), "lead-black"]])
+
     def content(lo, hi):
         return sum(e - s for s, e in subtract(lo, hi, cuts))
 
@@ -414,7 +447,7 @@ def main():
         print("HOLD: model answer unusable")
         sys.exit(3)
 
-    problems = []
+    problems = [lead_note] if lead_note else []
     # end boundary
     end = default_end
     ei = choice.get("end_option")
@@ -556,9 +589,23 @@ def main():
         chaps.append([round(float(t), 1), str(row[1]).strip()])
     chaps.sort()
     clean = [chaps[0]]
+    seen = {re.sub(r"\W+", " ", chaps[0][1]).strip().lower()}
     for t, lab in chaps[1:]:
+        key = re.sub(r"\W+", " ", lab).strip().lower()
+        if key in seen:
+            # 12 Nov (quality session): the cold open carried the same label as the body chapter where
+            # that moment really happens. Keep the body chapter (viewers jump to it) and call 0:00
+            # "Cold open", as the published Rogue/OMEA Parts do. Any other repeat is dropped.
+            if key == re.sub(r"\W+", " ", clean[0][1]).strip().lower():
+                clean[0] = [clean[0][0], "Cold open"]
+                problems.append("cold-open label %r repeats a chapter; 0:00 renamed Cold open" % lab)
+                seen = {k for k in seen if k != key} | {"cold open"}
+            else:
+                problems.append("chapter %r repeats an earlier label, dropped" % lab)
+                continue
         if t - clean[-1][0] >= 10.0 and t < total - OUTRO_D - 5:
             clean.append([t, lab])
+            seen.add(key)
     if len(clean) < 3:   # code fallback: evenly spaced, labelled by the first words there
         problems.append("fewer than 3 usable chapters from the model; filled by code")
         for f in (0.33, 0.66):

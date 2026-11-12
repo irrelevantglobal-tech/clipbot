@@ -29,12 +29,13 @@ def main(argv):
         vod, plan_f, title, game, brand, login, out_dir = argv[1:8]
         os.makedirs(out_dir, exist_ok=True)
         plan = json.load(open(plan_f, encoding="utf-8"))
+        retired = plan.pop("_retired", None)
         t0 = time.time()
         bdir = os.path.join(out_dir, "_brand")
         outro = os.path.join(bdir, "outro.mp4")
         if not os.path.exists(outro):
-            os.replace(stings.outro(game, brand, login, bdir), outro)
-        intro = stings.intro(title, game, brand, login, bdir)
+            os.replace(stings.outro(game, brand, login, bdir, retired), outro)
+        intro = stings.intro(title, game, brand, login, bdir, retired)
         out, r = stages.render_episode(vod, plan, intro, outro, os.path.join(out_dir, "_work"))
         dst = os.path.join(out_dir, "episode.mp4")
         os.replace(out, dst)

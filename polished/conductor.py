@@ -334,7 +334,7 @@ class ModalLane:
         sink.put(None)
 
     def _render_one(self, vod, p, t, b, k):
-        fc = self.fr.spawn(vod, p, t, self.run.a.series, b["brand"], b["login"], k)
+        fc = self.fr.spawn(vod, p, t, self.run.a.series, b["brand"], b["login"], k, b["retired"])
         while True:
             if getattr(self, "cancel_first", False):
                 self.cancel_first = False
@@ -411,7 +411,7 @@ class VastLane:
             try:
                 self.job.check_money()
                 pf = os.path.join(self.job.dir, "plan_%s.json" % k)
-                jdump(p, pf)
+                jdump(dict(p, _retired=b["retired"]), pf)   # in the file, not on the box's command line
                 self.host.put(pf, "/root/plan_%s.json" % k)
                 od = "/root/ep_%s" % k
                 self._py("render %s /root/plan_%s.json %s %s %s %s %s" % (
@@ -461,8 +461,8 @@ class LocalLane:
                 break
             try:
                 if outro is None:
-                    outro = stings.outro(self.run.a.series, b["brand"], b["login"], bdir)
-                intro = stings.intro(t, self.run.a.series, b["brand"], b["login"], bdir)
+                    outro = stings.outro(self.run.a.series, b["brand"], b["login"], bdir, b["retired"])
+                intro = stings.intro(t, self.run.a.series, b["brand"], b["login"], bdir, b["retired"])
                 mp4, rep = stages.render_episode(vod, p, intro, outro, os.path.join(self.run.a.out, "_ep_" + k))
                 dst = os.path.join(self.run.a.out, "%s.mp4" % k)
                 os.replace(mp4, dst)
@@ -492,7 +492,8 @@ def main():
     a = ap.parse_args()
     from clipbot import common, episodes
     run = Run(a)
-    run.ident = {"brand": common.BRAND, "login": common.LOGIN}
+    run.ident = {"brand": common.BRAND, "login": common.LOGIN,
+                 "retired": [n for n in common.IDENT.get("legacy", []) if n]}   # the stings refuse these names
     run.brand = common.BRAND
     v = common.helix(f"videos?id={a.vod}")["data"][0]
     total = episodes._secs(v["duration"])

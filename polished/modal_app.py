@@ -64,7 +64,7 @@ def analyze(vod: str, lo: float, hi: float):
 
 
 @app.function(gpu=GPUS, cpu=4.0, memory=8192, timeout=3600, retries=0, volumes={"/xfer": vol})
-def render(vod: str, plan: dict, title: str, game: str, brand: str, login: str, key: str):
+def render(vod: str, plan: dict, title: str, game: str, brand: str, login: str, key: str, retired: list = None):
     """Renders one episode to /xfer/out/<key>.mp4 (+ its report). Re-run with the same key = no-op."""
     _repo()
     import hashlib
@@ -86,12 +86,12 @@ def render(vod: str, plan: dict, title: str, game: str, brand: str, login: str, 
     tag = hashlib.sha1(("%s|%s|%s" % (game, brand, login)).encode()).hexdigest()[:10]
     outro = "/xfer/brand/outro_%s.mp4" % tag
     if not os.path.exists(outro):
-        o = stings.outro(game, brand, login, "/tmp/brand")
+        o = stings.outro(game, brand, login, "/tmp/brand", retired)
         shutil.copy(o, outro + ".part")
         os.replace(outro + ".part", outro)
         vol.commit()
     t_s = time.time()
-    intro = stings.intro(title, game, brand, login, "/tmp/brand")
+    intro = stings.intro(title, game, brand, login, "/tmp/brand", retired)
     t_sting = time.time() - t_s
     out, r = stages.render_episode(vod, plan, intro, outro, work)
     shutil.copy(out, dst + ".part")
