@@ -10,6 +10,8 @@ Each option shows the words just BEFORE it, then "|", then the words just AFTER 
 Code also found long stretches where the picture looks like a MENU (lobby, loadout, inventory, map, settings, or an in-game computer screen). Each is listed with every word spoken during it. Decide for each one: CUT it only if it is dead time for a viewer (picking loadouts, readying up, sorting inventory, waiting in a lobby, settings, chat about nothing on screen). KEEP it if anything story-related happens (characters talking to each other, a mission or plot screen, a story choice), or if he is reacting to something worth watching, joking, or riffing about the game (even about controls or settings). When unsure, keep.
 {MENUS}
 
+The transcript is machine speech recognition: names are often misheard (a game character, a place, another streamer). In the title, description and chapter labels, write a name the way the game or the person actually spells it when the context makes it clear (e.g. "Gladys" said about Portal is GLaDOS); if you are not sure, leave the name out rather than guess.
+
 Then, from the transcript between the start and your chosen end:
 1. cold_open: a 6-12 second moment that hooks a new viewer (a reaction, a funny line, a payoff), given as source seconds s and e that start just before a sentence and end just after one. Not a menu, not a loading screen, not him reading a settings screen. A short label for it.
 2. title: the part after "{GAME} Part N - ". Specific to THIS episode, curiosity-driven, sentence case words capitalised like the example, under 60 characters. No clickbait lies, no emoji, no em dashes.

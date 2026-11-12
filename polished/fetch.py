@@ -20,7 +20,7 @@ yt-dlp gets the public playback token itself.
 import concurrent.futures as cf
 import json
 import os
-import re
+
 import shutil
 import subprocess
 import sys

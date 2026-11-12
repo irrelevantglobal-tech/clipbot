@@ -18,6 +18,7 @@ on:
       max_episodes: {description: test only, plan the first N (0 = all), default: "0"}
       keep: {description: test only, keep the first N mp4s as an encrypted artifact (upload=false), default: "0"}
       answers: {description: lane 4 (encrypted, from polished/hold.py), default: ""}
+      faults: {description: "QA only, ignored when upload=true: comma list (see conductor.FAULT_HELP)", default: ""}
   workflow_call:
     inputs:
       vod: {type: string, required: true}
@@ -31,6 +32,7 @@ on:
       max_episodes: {type: string, default: "0"}
       keep: {type: string, default: "0"}
       answers: {type: string, default: ""}
+      faults: {type: string, default: ""}
 permissions:
   contents: read
   actions: read          # the ledger + state artifacts of earlier runs
@@ -67,6 +69,8 @@ jobs:
       GTA6_API_SINCE: ${{ vars.GTA6_API_SINCE }}
       GTA6_MODAL_HANDOFF: ${{ vars.GTA6_MODAL_HANDOFF }}
       GITHUB_TOKEN: ${{ github.token }}
+      POLISHED_FAULTS: ${{ inputs.faults }}
+      POLISHED_DRY: ${{ inputs.upload && '0' || '1' }}
       STATE_NAME: gta6-state-${{ inputs.vod }}-${{ inputs.from }}
     steps:
       - name: Check input
@@ -75,6 +79,7 @@ jobs:
           [[ "$FROM" =~ ^[0-9]+(\.[0-9]+)?$ && "$TO" =~ ^[0-9]+(\.[0-9]+)?$ && "$MAXEP" =~ ^[0-9]+$ && "$KEEP" =~ ^[0-9]+$ ]] || { echo "bad numbers"; exit 1; }
           [[ "$SERIES" =~ ^[A-Za-z0-9\ :\'-]{2,40}$ ]] || { echo "bad series"; exit 1; }
           [[ "$LANE" =~ ^(auto|modal|vast)$ ]] || { echo "bad lane"; exit 1; }
+          [[ "$POLISHED_FAULTS" =~ ^[a-z0-9_,]*$ ]] || { echo "bad faults"; exit 1; }
           [[ -n "$CLIPBOT_ZIP_KEY" ]] || { echo "no CLIPBOT_ZIP_KEY: state would be public, refusing"; exit 1; }
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -166,9 +171,11 @@ jobs:
           if-no-files-found: ignore
           retention-days: 3
           compression-level: 0
-      - name: Tell the owner it failed
-        if: failure()
+      - name: Tell the owner it failed (and free the window so the worker re-runs it)
+        if: failure() || cancelled()
         run: |
-          curl -s -X POST -H "Authorization: Bearer $CLIPBOT_TOKEN" -H "Content-Type: application/json" \
-            -A "ClipBot/1.0" -d "{\"id\":\"polished $VOD from $FROM\",\"error\":\"GitHub run $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID failed\"}" \
-            $CLIPBOT_WORKER/clipbot/failed || true
+          # the conductor posts its own "died" line; this covers a client killed before it could
+          [ -f out/status_died.txt ] || python -m polished.status died "$VOD" "$FROM" "$TO"             "the job stopped without reporting (runner killed or cancelled). Nothing half-made was uploaded." || true
+          # "episodes <vod> from <s>" is the id the worker frees a window on; tests use another id (no window to free)
+          id="polished $VOD from $FROM"; [[ "${{ inputs.upload }}" == "true" ]] && id="episodes $VOD from $FROM"
+          curl -s -X POST -H "Authorization: Bearer $CLIPBOT_TOKEN" -H "Content-Type: application/json"             -A "ClipBot/1.0" -d "{\"id\":\"$id\",\"error\":\"GitHub run $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID failed\"}"             $CLIPBOT_WORKER/clipbot/failed || true

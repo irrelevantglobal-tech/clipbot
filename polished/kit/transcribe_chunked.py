@@ -43,14 +43,28 @@ os.makedirs(cdir, exist_ok=True)
 dur = float(subprocess.run([FP, "-v", "error", "-show_entries", "format=duration",
                             "-of", "csv=p=0", src],
                            capture_output=True, text=True).stdout.strip())
-n = int(dur // CHUNK) + (1 if dur % CHUNK else 0)
+# Chunk plan: fixed CHUNK-second pieces, but a final piece shorter than MIN_TAIL is folded into
+# the one before it. A 1800.05 s window used to make a 4th chunk of 0.05 s; whisper cannot align
+# words on a 50 ms sliver (IndexError in find_alignment, every retry the same), so the whole
+# transcript came back incomplete and the episode was refused (12 Nov, a marathon-channel VOD).
+MIN_TAIL = 30.0
+spans = []
+off = 0.0
+while off < dur - 1e-6:
+    ln = min(CHUNK, dur - off)
+    if spans and ln < MIN_TAIL:
+        spans[-1] = (spans[-1][0], spans[-1][1] + ln)
+    else:
+        spans.append((off, ln))
+    off += ln
+n = len(spans)
 print("source %.0f s -> %d chunks of %.0f s (timeout %.0f s each)"
       % (dur, n, CHUNK, TIMEOUT), flush=True)
 
 failed = []
 t_all = time.time()
 for i in range(n):
-    off = i * CHUNK
+    off, ln = spans[i]
     wav = os.path.join(cdir, "%s_%03d.wav" % (tag, i))
     js = os.path.join(cdir, "%s_%03d.json" % (tag, i))
     if os.path.exists(js):
@@ -58,7 +72,7 @@ for i in range(n):
         continue
 
     if not os.path.exists(wav):
-        subprocess.run([FF, "-v", "error", "-ss", "%.3f" % off, "-t", "%.3f" % CHUNK,
+        subprocess.run([FF, "-v", "error", "-ss", "%.3f" % off, "-t", "%.3f" % ln,
                         "-i", src, "-ac", "1", "-ar", "16000", "-y", wav], check=True)
 
     # Two identical attempts. A wedge is not deterministic - the first run of this
@@ -69,10 +83,10 @@ for i in range(n):
         t0 = time.time()
         try:
             subprocess.run([sys.executable, WORKER, wav, js, "%.3f" % off],
-                           timeout=TIMEOUT, check=True)
+                           timeout=max(TIMEOUT, ln * 8), check=True)
             print("[%03d] %5.0f-%5.0f s  ok in %5.0f s (%.1fx)"
-                  % (i, off, min(off + CHUNK, dur), time.time() - t0,
-                     CHUNK / max(time.time() - t0, 1)), flush=True)
+                  % (i, off, off + ln, time.time() - t0,
+                     ln / max(time.time() - t0, 1)), flush=True)
             break
         except subprocess.TimeoutExpired:
             print("[%03d] TIMEOUT after %.0f s%s" % (i, TIMEOUT,

@@ -228,7 +228,12 @@ class Job:
             return 0.0
         return float(self.offer.get("dph_total") or 0) * (time.time() - self.t0) / 3600
 
+    keep_instance = False   # QA fault vast_leftover only: leave it for the next run's sweep to destroy
+
     def __exit__(self, *exc):
+        if self.iid and self.keep_instance:
+            print(f"  FAULT vast_leftover: instance {self.iid} left RUNNING on purpose; the next run's sweep must destroy it")
+            return False
         if self.iid:
             ok = self.v.destroy(self.iid)
             print(f"  instance {self.iid} {'DESTROYED' if ok else 'COULD NOT BE DESTROYED - check the Vast console'}")

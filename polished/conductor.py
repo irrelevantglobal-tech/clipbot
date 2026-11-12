@@ -36,6 +36,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, ROOT)
 from polished import ledger, stages  # noqa: E402
+from polished.status import Status  # noqa: E402
 
 CHUNK = 1800.0
 MODAL_HANDOFF = float(os.environ.get("GTA6_MODAL_HANDOFF") or 27.0)
@@ -43,6 +44,36 @@ EST_PER_STREAM_H = {"modal": 0.75, "vast": 0.30}    # $ per stream-hour, conserv
 RENDER_PAR = 3
 MAX_EPISODES_PER_WINDOW = 30
 MARK = "clipbot:ep:"
+
+
+# FAULT SWITCHES for the QA run (owner: "make sure its actually gonna work"). Env POLISHED_FAULTS = comma
+# list; honoured ONLY when the run does not upload (a dry run can never ship anything a fault produced).
+FAULTS = set()
+FAULT_HELP = {
+    "modal_near_cap": "Modal bill read as just under the hand-over mark: runs on Modal + 'about to switch' warning",
+    "modal_at_cap": "Modal bill read as AT the mark: the window goes to Vast",
+    "vast_zero": "Vast balance read as $0: Vast refuses cleanly",
+    "vast_start_fail": "every Vast rent attempt fails: the next offer, then HOLD; nothing left running",
+    "vast_leftover": "the Vast instance is NOT destroyed at the end (the next run's sweep must destroy it)",
+    "api_dry": "cloud API budget 0: planning HOLDS (lane 4), never a rough cut",
+    "all_lanes_out": "modal_at_cap + vast_zero: HOLD + phone ping",
+    "kill_render": "the first Modal render is cancelled mid-way: the window dies, nothing partial is kept",
+    "client_dies": "this Actions client exits hard while renders run (exit 137)",
+    "stall": "no board update for POLISHED_STALL_MIN (default 30) min while RUNNING: the watchdog must post stuck",
+    "fail_window": "the window fails on purpose (3 in a row = the worker steps over it)",
+    "no_1080": "the VOD is treated as having no 1920x1080 rendition: hard refuse before any GPU spend",
+    "dup_unreadable": "the duplicate-upload guard's sources are unreadable: the run must stop before any upload",
+}
+
+
+def hm(sec):
+    """Stream time as the owner reads it: 5:07 = 5 h 7 min into the VOD."""
+    sec = int(sec or 0)
+    return "%d:%02d" % (sec // 3600, sec % 3600 // 60)
+
+
+def fault(name):
+    return name in FAULTS
 
 
 def log(*a):
@@ -74,10 +105,13 @@ class Run:
         self.api_spent0 = 0.0
         self.notes = []
         self.lane = None
+        self.money = {}
+        self.all_out = False
+        self.st = None
 
     # ------------------------------------------------------------------ money + lane
     def api_budget(self):
-        return float(os.environ.get("GTA6_API_BUDGET") or 0.0)
+        return 0.0 if fault("api_dry") else float(os.environ.get("GTA6_API_BUDGET") or 0.0)
 
     def api_left_args(self):
         return ["--budget-limit", "%.4f" % self.api_budget(), "--budget-spent", "%.4f" % (self.api_spent0 + self.cost["api"])]
@@ -89,8 +123,16 @@ class Run:
             try:
                 self.modal_spent0 = ledger.modal_spent()
                 est = stream_h * EST_PER_STREAM_H["modal"]
+                if fault("modal_near_cap"):
+                    self.modal_spent0 = MODAL_HANDOFF - est * 1.2
+                if fault("modal_at_cap") or fault("all_lanes_out"):
+                    self.modal_spent0 = MODAL_HANDOFF
+                self.money["modal"] = self.modal_spent0
                 if self.modal_spent0 + est < MODAL_HANDOFF:
                     log(f"lane modal: month-to-date ${self.modal_spent0:.2f} + this window ~${est:.2f} < ${MODAL_HANDOFF:.2f}")
+                    if self.modal_spent0 + 2 * est >= MODAL_HANDOFF:
+                        self.st.event("switch_soon", f"Modal is at ${self.modal_spent0:.2f} of its ${MODAL_HANDOFF:.0f} "
+                                      "hand-over mark. This window still runs on Modal; the NEXT one moves to Vast.ai.")
                     return "modal"
                 why.append(f"Modal at ${self.modal_spent0:.2f} of its ${MODAL_HANDOFF:.0f} hand-over mark")
             except Exception as e:   # noqa: BLE001
@@ -100,16 +142,24 @@ class Run:
         if want in ("auto", "vast") and os.environ.get("VAST_API_KEY"):
             from polished import vast
             try:
-                bal = vast.Vast().balance()
+                bal = 0.0 if (fault("vast_zero") or fault("all_lanes_out")) else vast.Vast().balance()
+                self.money["vast"] = bal
                 est = stream_h * EST_PER_STREAM_H["vast"]
                 if bal - est * 1.5 >= vast.MIN_BALANCE:
                     log(f"lane vast: balance ${bal:.2f}, this window ~${est:.2f}")
+                    if want == "auto":
+                        self.st.event("lane", "Moved to Vast.ai: " + "; ".join(why) + f". Vast has ${bal:.2f}.", urgent=False)
+                    if bal - 3 * est * 1.5 < vast.MIN_BALANCE:
+                        self.st.event("switch_soon", f"Vast.ai has ${bal:.2f} left, about 2 more windows. After that "
+                                      "windows HOLD until there is a lane (December's Modal credit, the laptop after the week, "
+                                      "or your call).")
                     return "vast"
                 why.append(f"Vast balance ${bal:.2f} cannot cover ~${est:.2f}")
             except Exception as e:   # noqa: BLE001
                 why.append(f"Vast unreadable ({str(e)[:100]})")
         elif want in ("auto", "vast"):
             why.append("no Vast key in this job")
+        self.all_out = True
         raise Hold("no GPU lane can take this window: " + "; ".join(why))
 
     # ------------------------------------------------------------------ analysis
@@ -130,9 +180,13 @@ class Run:
             else:
                 todo.append(c)
         log(f"analysis: {len(got)} chunk(s) reused from state, {len(todo)} to run on {self.lane}")
+        n_all = len(got) + len(todo)
+        self.st.board(force=True, stage="analysing (whisper, picture, menus)", done=len(got), total=n_all,
+                      eta=time.time() + (12 * 60 if self.lane == "modal" else 7 * 60 * len(todo) + 15 * 60))
         for c, r in gpu.analyze_many(vod, todo):
             jdump(r, os.path.join(self.state, "chunk_%d.json" % int(c[0])))
             got[c] = r
+            self.st.board(done=len(got))
             log(f"  chunk {c[0]:.0f}-{c[1]:.0f}: {len(r['segments'])} segments, {r['gpu']}, {r['timings'].get('total_s')} s")
         an = stages.merge_chunks(list(got.values()))
         jdump(an, os.path.join(self.state, "analysis.json"))
@@ -145,7 +199,9 @@ class Run:
         idx = jload(os.path.join(self.state, "plans.json"), {}) or {}
         answers = jload(self.a.answers, {}) if self.a.answers else {}
         apath = os.path.join(self.state, "analysis.json")
+        self.st.board(force=True, stage="planning episodes", done=0, total=0, eta=time.time() + 20 * 60)
         for n in range(MAX_EPISODES_PER_WINDOW):
+            self.st.board(done=len(plans), detail="planned %d so far" % len(plans))
             if self.a.max_episodes and len(plans) >= self.a.max_episodes:
                 break
             key = "vodstart" if start is None else "%.3f" % start
@@ -188,7 +244,7 @@ class Run:
                 return plans, lo + float(t["next_start"]), None
             if rc == 3:
                 h = jload(os.path.join(ep_dir, "hold.json"), {})
-                hold = f"planning at window second {key}: {h.get('why', 'held')}"
+                hold = f"planning episode {len(plans) + 1} (stream time {hm(lo + (start or 0.0))}): {h.get('why', 'held')}"
                 return plans, None, hold
             raise RuntimeError(f"plan_cut failed (rc {rc}) at {key}")
         # stopped by --max-episodes (tests) or the per-window cap: continue from the last end
@@ -234,15 +290,23 @@ class ModalLane:
             def top_up():
                 while pending and len([f for _, f in futs if not f.done()]) < RENDER_PAR and not stop.is_set():
                     k, p, t = pending.pop(0)
-                    futs.append((k, ex.submit(self.fr.remote, vod, p, t, self.run.a.series, b["brand"], b["login"], k)))
+                    futs.append((k, ex.submit(self._render_one, vod, p, t, b, k)))
             top_up()
             i = 0
             while i < len(futs):
                 k, f = futs[i]
                 i += 1
+                waited = 0
                 while not f.done():
                     top_up()
                     time.sleep(2)
+                    waited += 2
+                    if waited == 60 and i == 1 and fault("client_dies"):
+                        log("FAULT client_dies: exiting hard mid-render")
+                        os._exit(137)
+                    if waited == 60 and i == 1 and fault("kill_render"):
+                        log("FAULT kill_render: cancelling the first render")
+                        self.cancel_first = True
                 top_up()
                 try:
                     rep = f.result()
@@ -269,6 +333,18 @@ class ModalLane:
                 top_up()
         sink.put(None)
 
+    def _render_one(self, vod, p, t, b, k):
+        fc = self.fr.spawn(vod, p, t, self.run.a.series, b["brand"], b["login"], k)
+        while True:
+            if getattr(self, "cancel_first", False):
+                self.cancel_first = False
+                fc.cancel()
+                raise RuntimeError("render cancelled mid-way (fault kill_render)")
+            try:
+                return fc.get(timeout=5)
+            except TimeoutError:
+                continue
+
     def sweep(self, older_h=6):
         try:
             for e in self.vol.listdir("out"):
@@ -286,6 +362,13 @@ class VastLane:
         # downloads ~3.6 GB per stream-hour (8 Mbps) x 1.1 for chunk overlap + renders' own fetch; uploads = episodes
         self.job = vast.Job(self.v, est_hours=stream_h * 0.9 + 0.3, down_gb=stream_h * 8.0, up_gb=stream_h * 3.5,
                             label_suffix="-%s" % os.environ.get("GITHUB_RUN_ID", "local"))
+        if fault("vast_start_fail"):
+            def boom(*a_, **k_):
+                raise vast.VastError("rent refused (fault vast_start_fail)")
+            self.v.create = boom
+        if fault("vast_zero"):
+            self.v.balance = lambda: 0.0
+        self.job.keep_instance = fault("vast_leftover")
         self.host = None
 
     def __enter__(self):
@@ -418,6 +501,16 @@ def main():
            "window": [lo, hi], "final": a.final, "polished": True, "episodes": [], "holes": []}
     mpath = os.path.join(a.out, "episodes.json")
     t_run = time.time()
+    if not a.upload:
+        FAULTS.update(x.strip() for x in (os.environ.get("POLISHED_FAULTS") or "").split(",") if x.strip())
+        if FAULTS:
+            log("FAULTS ON (dry run):", sorted(FAULTS))
+    elif os.environ.get("POLISHED_FAULTS"):
+        log("POLISHED_FAULTS ignored: this run uploads")
+    run.st = Status(a.vod, lo, hi, dry=not a.upload)
+    run.st.event("started", "%s window started%s." % ("Polishing" if a.upload else "TEST polish of a",
+                                                      " (faults: %s)" % ", ".join(sorted(FAULTS)) if FAULTS else ""),
+                 urgent=False)
     try:
         run.api_spent0 = ledger.api_spent(since=os.environ.get("GTA6_API_SINCE") or "2026-11-01") if os.environ.get("GITHUB_TOKEN") else 0.0
     except Exception as e:   # noqa: BLE001 - unreadable ledger = assume the worst: the budget is spent
@@ -430,7 +523,16 @@ def main():
         return 0
     hold = None
     try:
+        # 1080p preflight: refuse before any GPU money is spent (fetch() re-checks every file anyway)
+        from polished import fetch
+        if fault("no_1080"):
+            raise RuntimeError(f"VOD {a.vod} has no 1920x1080 rendition (fault no_1080); refusing (owner: everything 1080p)")
+        fetch.rendition(a.vod)
+        run.money["api"] = max(0.0, run.api_budget() - run.api_spent0)
+        run.st.board(force=True, stage="choosing a lane", money=run.money)
         run.lane = "local" if a.lane == "local" else run.pick_lane((hi - lo) / 3600)
+        run.st.board(force=True, lane={"modal": "Modal (cloud GPU)", "vast": "Vast.ai (rented GPU)",
+                                       "local": "laptop"}[run.lane], money=run.money)
         man["lane"] = run.lane
         if run.lane == "local":
             ctx = _null(LocalLane(run))
@@ -454,13 +556,32 @@ def main():
         man["error"] = str(e)[:500]
         jdump(man, mpath)
         finish(run, man, t_run)
+        n_ok = sum(1 for x in man["episodes"] if x.get("video"))
+        run.st.event("died", "stopped during **%s**: %s. Nothing half-made was uploaded%s. %s" % (
+            run.st.state.get("stage"), str(e)[:220],
+            " (%d finished episode(s) before it are up and get their cards)" % n_ok if n_ok else "",
+            "The worker starts this window again at its next check (3 tries, then it steps over it and tells you)."
+            if a.upload else "Test run: nothing else happens."))
+        run.st.board(force=True, stage="idle", detail="last window died; see the line above")
+        open(os.path.join(a.out, "status_died.txt"), "w").write("posted")
         raise
     if hold:
         man["partial"] = True
         man.pop("next_from", None)
         man["held"] = hold
-        tell(common, f"episodes {a.vod} window {int(lo)}", f"Polished episodes HELD at {hold}. "
-             "Nothing after it gets a card until it is fixed (ask Claude: polished hold).")
+        kind = "all_out" if run.all_out else ("credit" if ("budget" in hold or "credit" in hold) else "held")
+        run.st.event(kind, "HELD: %s. Nothing rough is posted and nothing after it gets a card. %s" % (
+            hold[:400], "Ask Claude: \"polished hold\" (a Claude session can plan/review it on your plan)."
+            if kind != "all_out" else "Every GPU lane is out of credit: windows wait (Twitch keeps the VODs ~2 weeks). "
+            "Decide: December's Modal credit, the laptop after the week, or top-up."))
+        run.st.board(force=True, stage="held", detail=hold[:300])
+    else:
+        n = len(man["episodes"])
+        run.st.event("done", "%d episode(s) %s in %.0f min. Next window starts at %s." % (
+            n, "uploaded PRIVATE, cards in #episode-approvals" if a.upload else "rendered (test, nothing uploaded)",
+            (time.time() - t_run) / 60, "stream time " + hm(man.get("next_from", hi))), urgent=False)
+        run.st.board(force=True, stage="idle", done=0, total=0, eta=None,
+                     detail="last window: %d episode(s), $%.2f" % (n, sum(run.cost.values())))
     jdump(man, mpath)
     finish(run, man, t_run)
     return 0
@@ -514,6 +635,11 @@ def process(run, gpu, an, plans, lo, man, common, episodes):
         jobs.append((key, pv, p["title"]))
     if not jobs:
         return None
+    if fault("fail_window"):
+        raise RuntimeError("fault fail_window: this window fails on purpose")
+    if fault("dup_unreadable"):
+        common.recent_uploads = lambda *x, **k: None      # the uploads playlist cannot be read
+        episodes.marker_on_channel(f"{MARK}{a.vod}:{int(meta[jobs[0][0]]['start'])}")   # must raise, so nothing uploads
     if a.upload:
         common.channel_gate()
     # already up (a retry): never render or upload twice
@@ -537,27 +663,38 @@ def process(run, gpu, an, plans, lo, man, common, episodes):
     for key, pv, t in jobs:
         m = meta[key]
         if "video" not in m:
+            stall_until = time.time() + 60 * float(os.environ.get("POLISHED_STALL_MIN") or 30) if fault("stall") else 0
+            t_wait = time.time()
             while key not in ready:
-                item = sink.get(timeout=4 * 3600)
+                try:
+                    item = sink.get(timeout=60)
+                except queue.Empty:
+                    if time.time() - t_wait > 4 * 3600:
+                        break
+                    if time.time() > stall_until:      # heartbeat (throttled to one edit per 4 min)
+                        run.st.board(detail="episode %d of %d rendering" % (m["i"], len(jobs)))
+                    continue
                 if item is None:
                     break
                 ready[item[0]] = item
             got = ready.get(key)
             if not got or got[1] is None:
-                hold = f"episode {m['i']} ({m['start']:.0f}s): {got[2] if got else 'never rendered'}"
+                hold = f"episode {m['i']} (stream time {hm(m['start'])}): {got[2] if got else 'never rendered'}"
                 break
             _, mp4, rep = got
             g = rep.get("gates", {})
             if not g.get("pass"):
-                hold = f"episode {m['i']} ({m['start']:.0f}s): data gate failed (verify rc {g.get('verify_rc')}, A/V {g.get('av_sync')})"
+                hold = f"episode {m['i']} (stream time {hm(m['start'])}): data gate failed (verify rc {g.get('verify_rc')}, A/V {g.get('av_sync')})"
                 break
             rv = review(run, an, m, mp4)
             m["review"] = rv
             if rv.get("verdict") != "pass":
-                hold = f"episode {m['i']} ({m['start']:.0f}s): review {rv.get('verdict')}: " + \
+                hold = f"episode {m['i']} (stream time {hm(m['start'])}): review {rv.get('verdict')}: " + \
                     "; ".join(x.get("what", "") for x in rv.get("issues", []) if x.get("severity") == "blocker")[:300]
                 break
             m["report"] = {k: rep.get(k) for k in ("duration", "expected", "gpu", "encoder", "timings", "size")}
+            run.st.board(force=True, stage="render, review, upload", done=m["i"], total=len(jobs),
+                         detail="episode %d passed the gates and the review" % m["i"])
             if a.upload:
                 title, desc = draft_copy(run, m, episodes)
                 vid = episodes.upload_private(mp4, title, desc, episodes.tags_for(a.series))
