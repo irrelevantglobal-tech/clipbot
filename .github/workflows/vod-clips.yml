@@ -53,7 +53,7 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-      - run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+      - run: for i in 1 2 3 4; do sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg && break; echo "apt failed ($i), retrying in 30 s"; sleep 30; done; command -v ffmpeg > /dev/null
       - run: pip install -q -r requirements.txt
       - uses: actions/cache@v4
         with:
