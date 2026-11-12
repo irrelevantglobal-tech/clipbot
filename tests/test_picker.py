@@ -157,16 +157,22 @@ class Choose(unittest.TestCase):
         return {"score": score, "who": "streamer", "kind": "reaction", "bounds": None, "title": f"T{score}", **kw}
 
     def test_ranked_best_first_vetoes_and_floor_drop(self):
-        # ranks: 30/20+2/4=2.0, 22/20+8/4=3.1, 12/20+1/4=0.85 (under the floor), 9/20+9/4=2.7 but menu (veto)
-        out = self.run_choose({0: self.v(2), 1: self.v(8), 2: self.v(1), 3: self.v(9, kind="menu")})
-        self.assertEqual([t for _, t in out], ["T8", "T2"])
+        # ranks: 30/20+5/4=2.75, 22/20+8/4=3.1, 12/20+1/4=0.85 (under the floor), 9/20+9/4=2.7 but menu (veto)
+        out = self.run_choose({0: self.v(5), 1: self.v(8), 2: self.v(1), 3: self.v(9, kind="menu")})
+        self.assertEqual([t for _, t in out], ["T8", "T5"])
+
+    def test_a_weak_verdict_needs_chat_to_get_over_the_floor(self):
+        cs = self.cands()
+        self.assertEqual(self.run_choose({0: self.v(2)}, [cs[0]]), [])          # 1.5 + 0.5 = 2.0
+        cs[0]["chat"] = (1, 1)                                                   # + 1.2
+        self.assertEqual(len(self.run_choose({0: self.v(2)}, [cs[0]])), 1)
 
     def test_slow_window_offers_nothing(self):
         cs = [{**c, "score": 4.0} for c in self.cands()]
         self.assertEqual(self.run_choose({0: self.v(2), 1: self.v(1), 2: self.v(9, who="game"), 3: self.v(8, kind="sponsor")}, cs), [])
 
     def test_cut_is_snapped_and_text_follows_the_cut(self):
-        out = self.run_choose({0: self.v(9, bounds=(1001.5, 1012.0))})
+        out = self.run_choose({0: self.v(9, bounds=(1001.5, 1012.0))}, [self.cands()[0]])
         c = out[0][0]
         self.assertLessEqual(c["s"], 997.0)                   # back to the setup phrase
         self.assertIn("setup", c["text"])
@@ -176,7 +182,7 @@ class Choose(unittest.TestCase):
         cs = self.cands()
         with mock.patch.object(f.judge, "judge", return_value=False),                 mock.patch.object(f, "rerank", return_value=[(1, "Ranked"), (0, "Top")]) as rr:
             out = f.choose(cs, "a.wav", 7200, "t", 3, [])
-        self.assertEqual(len(rr.call_args[0][0]), 2)          # only the 30 and 22 cleared the floor of 15
+        self.assertEqual(len(rr.call_args[0][0]), 2)          # only the 30 and 22 cleared the floor of 20
         self.assertEqual([t for _, t in out], ["Ranked", "Top"])
 
     def test_judge_crash_falls_back_instead_of_losing_the_window(self):
@@ -185,7 +191,7 @@ class Choose(unittest.TestCase):
         self.assertEqual(len(out), 2)
 
     def test_nothing_above_floor_without_judge_is_nothing(self):
-        cs = [c for c in self.cands() if c["score"] < 15]
+        cs = [c for c in self.cands() if c["score"] < 20]
         with mock.patch.object(f.judge, "judge", return_value=False):
             self.assertEqual(f.choose(cs, "a.wav", 7200, "t", 3, []), [])
 
@@ -242,6 +248,6 @@ class Chat(unittest.TestCase):
         self.assertEqual(chat.timeline("1", 0, 100, page=page, pause=0), [])
 
     def test_chat_lifts_a_quiet_moment_over_the_floor(self):
-        c = {"score": 6.0, "judge": {"score": 1, "who": "streamer", "kind": "reaction"}}
+        c = {"score": 16.0, "judge": {"score": 4, "who": "streamer", "kind": "reaction"}}
         self.assertLess(j.rank(c), j.FLOOR)
         self.assertGreater(j.rank({**c, "chat": (2, 1)}), j.FLOOR)

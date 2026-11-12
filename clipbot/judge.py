@@ -29,8 +29,12 @@ MAX_CHARS = 1400                     # transcript per stretch in the prompt
 # So it vetoes and it helps rank (rank()); it never decides alone.
 VETO_KINDS = {"menu", "loading", "logistics", "sponsor"}
 KINDS = {"reaction", "fail", "chaos", "scare", "banter", "clutch", "glitch", "story", "chat", "nothing"} | VETO_KINDS
-FLOOR = 1.0                          # rank() needed to be offered (dropped 2 of 16 approvals, ~10 of 38 skips)
-FALLBACK_FLOOR = 15.0                # heuristic score needed when the judge is down
+# rank() needed to be offered. On the 54 decided picks: floor 2.5 offers 10, he approved 6 (60%; the old picker 30%);
+# 1.0 offered 42 (33%). He approves ~1-2 per batch and can post 2 a day (4 in a marathon), so fewer, better cards.
+# On the 5 test windows it sends picks from the 6 Nov stretches he liked and ~none from 11-12 Nov (0/24 approved).
+FLOOR = 2.5
+FALLBACK_FLOOR = 20.0                # heuristic score needed when the judge is down (45% approved on the same 54)
+SCAN_CAP = 30.0                      # scan score counted at most this much in rank()
 
 
 def retranscribe(wav, cands, dur, model="small.en"):
@@ -94,7 +98,7 @@ def prompt(cands, stream_title):
         "The clip must make sense to someone who did not watch the stream.",
         '- "end": seconds where the clip ends: right after the payoff and the reaction or laugh finish, at the end of a '
         "sentence, never mid-line. Aim for 15-45 s between start and end.",
-        '- "title" (only when score >= 7): the on-screen hook, max 50 characters, Title Case. Say what HAPPENS, using only '
+        '- "title" (for EVERY candidate): the on-screen hook, max 50 characters, Title Case. Say what HAPPENS, using only '
         "what the transcript clearly shows (the specific thing: the car, the cops, the boss, the teammate). First person "
         "when it happens to the streamer. If the transcript is too unclear to say what happens, use the streamer's clearest "
         "line as a quote instead. Never invent events, never give away the punchline. No emojis, hashtags, swearing or em dashes.",
@@ -106,7 +110,7 @@ def prompt(cands, stream_title):
     ])
 
 
-def ask_worker(text, max_tokens=1600):
+def ask_worker(text, max_tokens=2000):
     """The judge AI. Returns the parsed JSON dict, or None when the route is missing or broken."""
     try:
         return common.worker("/clipbot/judge", {"prompt": text, "max_tokens": max_tokens, **common.who_fields()})
@@ -159,7 +163,8 @@ def rank(c):
     """Offer order and floor: the scan's heuristic score (what he says, how fast, how loud) + the judge's score
     + how much chat reacted (chat.boost)."""
     from .chat import boost
-    return c["score"] / 20 + (c["judge"]["score"] / 4 if c.get("judge") else 0) + boost(*c.get("chat", (0, 0)))
+    # the scan score is capped: fast talking alone scored 63.5 and outranked everything (6 Nov test, judge 2/10)
+    return min(c["score"], SCAN_CAP) / 20 + (c["judge"]["score"] / 4 if c.get("judge") else 0) + boost(*c.get("chat", (0, 0)))
 
 
 def judge(wav, cands, dur, stream_title, ask=ask_worker):
