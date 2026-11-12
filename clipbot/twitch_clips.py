@@ -43,7 +43,13 @@ def main():
         n = len(clips) + 1
         raw = os.path.join(a.out, f"raw{n}.mp4")
         tmp = raw + ".part.mp4"
-        subprocess.run(["yt-dlp", "-q", "--no-progress", "-f", "best[height<=1080]", "-o", tmp, c["url"]], check=True)
+        subprocess.run(["yt-dlp", "-q", "--no-progress", "-f", "best[height=1080]/best[height<=1080]", "-o", tmp, c["url"]], check=True)
+        try:
+            render.require_1080(tmp, f"Twitch clip {c['id'][:30]}")
+        except RuntimeError as ex:                 # one soft clip is skipped, the rest still go
+            print(f"{ex}; skipped")
+            os.remove(tmp)
+            continue
         shutil.move(tmp, raw)
         dur = render.duration(raw)
         if dur > 70:                               # brain: a "clip" file has been a whole VOD before

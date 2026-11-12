@@ -267,7 +267,8 @@ def cut_episode(url, win_wav, lo, spans, workdir, name):
     a0, b0 = spans[0][0], spans[-1][1]
     src = os.path.join(workdir, f"{name}_src.mp4")
     s0 = max(0.0, a0 - SLACK)
-    ytdlp(url, "1080p60/1080p/best[height<=1080]", f"*{s0:.2f}-{b0 + SLACK:.2f}", src)
+    ytdlp(url, render.VOD_FORMAT, f"*{s0:.2f}-{b0 + SLACK:.2f}", src)
+    w, h, fps = render.require_1080(src, f"{name} source")
     fwav = os.path.join(workdir, f"{name}_src.wav")
     sh(["ffmpeg", "-v", "error", "-y", "-i", src, "-t", "120", "-vn", "-ac", "1", "-ar", "16000", fwav])
     start, peak = offset_of(fwav, win_wav, s0 - lo)
@@ -277,7 +278,7 @@ def cut_episode(url, win_wav, lo, spans, workdir, name):
     start += lo                                       # source second at file t=0
     kf = keyframes(src, upto=60)
     gop = max((y - x for x, y in zip(kf, kf[1:])), default=0)
-    print(f"  {name}: file starts at source {start:.2f}s (match {peak:.2f}), keyframe gap {gop:.2f}s")
+    print(f"  {name}: file starts at source {start:.2f}s (match {peak:.2f}), keyframe gap {gop:.2f}s, {w}x{h}@{fps}")
     pieces = []
     for i, (a, b) in enumerate(spans):
         p = os.path.join(workdir, f"{name}_{i:03d}.ts")

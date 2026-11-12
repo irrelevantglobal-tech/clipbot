@@ -318,9 +318,10 @@ def main():
     for n, (c, title) in enumerate(chosen, 1):
         raw = os.path.join(a.out, f"raw{n}.mp4")
         tmp = raw + ".part.mp4"
-        subprocess.run(["yt-dlp", "-q", "--no-progress", "-N", "8", "-f", "1080p60/1080p/best[height<=1080]",
+        subprocess.run(["yt-dlp", "-q", "--no-progress", "-N", "8", "-f", render.VOD_FORMAT,
                         "--download-sections", f"*{c['s'] + a.lo:.2f}-{c['e'] + a.lo:.2f}", "--force-keyframes-at-cuts",
                         "-o", tmp, url], check=True)
+        render.require_1080(tmp, f"clip {n} source")
         shutil.move(tmp, raw)
         title = title or quote_title(c["text"])
         info = render.render(raw, os.path.join(a.out, f"clip{n}.mp4"), os.path.join(a.out, f"preview{n}.mp4"), hook=title)

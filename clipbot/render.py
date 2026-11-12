@@ -37,6 +37,28 @@ def duration(path):
     return float(run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", path]).strip())
 
 
+# Owner 2026-11-12: "everything 1080p". A download that is not 1920x1080 stops the job instead of
+# quietly shipping a softer picture. Formats are asked for as 1080p60/1080p only (no "best below
+# 1080" fallback), and this probe is the second check, on the file itself.
+VOD_FORMAT = "1080p60/1080p"
+
+
+def require_1080(path, what="download"):
+    """Raises unless the file's video stream is exactly 1920x1080. Returns (w, h, fps)."""
+    out = run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height,avg_frame_rate",
+               "-of", "csv=p=0", path]).strip().splitlines()
+    try:
+        w, h, fr = out[0].split(",")[:3]
+        w, h = int(w), int(h)
+        num, den = (fr.split("/") + ["1"])[:2]
+        fps = float(num) / float(den or 1) if float(den or 1) else 0.0
+    except (IndexError, ValueError):
+        raise RuntimeError(f"{what}: could not read the picture size ({out[:1]}); refusing to use it")
+    if (w, h) != (1920, 1080):
+        raise RuntimeError(f"{what} is {w}x{h}, not 1920x1080; refusing to use it (owner: everything 1080p)")
+    return w, h, round(fps, 2)
+
+
 def whisper(name, threads=0):
     if name not in _model:
         from faster_whisper import WhisperModel

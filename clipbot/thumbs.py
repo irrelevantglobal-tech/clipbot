@@ -15,6 +15,7 @@ import re
 import subprocess
 import sys
 
+from . import render
 from .style import gta_style
 
 N_GRABS = 8
@@ -22,9 +23,10 @@ N_GRABS = 8
 
 def grab(vod, t, out):
     tmp = out + ".mp4"
-    subprocess.run(["yt-dlp", "-q", "--no-progress", "-f", "1080p60/1080p/best[height<=1080]",
+    subprocess.run(["yt-dlp", "-q", "--no-progress", "-f", render.VOD_FORMAT,
                     "--download-sections", f"*{t:.1f}-{t + 1.5:.1f}", "-o", tmp, f"https://www.twitch.tv/videos/{vod}"],
                    check=True, timeout=180)
+    render.require_1080(tmp, "thumbnail frame")   # a failure keeps YouTube's own frame (ep_publish.thumbnail)
     subprocess.run(["ffmpeg", "-v", "error", "-y", "-sseof", "-0.5", "-i", tmp, "-frames:v", "1", out], check=True)
     os.remove(tmp)
     return out
