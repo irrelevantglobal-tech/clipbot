@@ -19,6 +19,7 @@ on:
       keep: {description: test only, keep the first N mp4s as an encrypted artifact (upload=false), default: "0"}
       answers: {description: lane 4 (encrypted, from polished/hold.py), default: ""}
       faults: {description: "QA only, ignored when upload=true: comma list (see conductor.FAULT_HELP)", default: ""}
+      fresh: {description: "ignore this window's saved state (re-analyse and re-plan; costs GPU + API again)", type: boolean, default: false}
   workflow_call:
     inputs:
       vod: {type: string, required: true}
@@ -33,6 +34,7 @@ on:
       keep: {type: string, default: "0"}
       answers: {type: string, default: ""}
       faults: {type: string, default: ""}
+      fresh: {type: boolean, default: false}
 permissions:
   contents: read
   actions: read          # the ledger + state artifacts of earlier runs
@@ -93,6 +95,7 @@ jobs:
       - run: for i in 1 2 3 4; do sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg fonts-dejavu-core && break; echo "apt failed ($i), retrying in 30 s"; sleep 30; done; command -v ffmpeg > /dev/null
       - run: pip install -q -r requirements.txt modal numpy pillow
       - name: Restore this window's state from an earlier attempt (no second analysis, no second plan call)
+        if: ${{ !inputs.fresh }}
         run: |
           mkdir -p state
           id=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=$STATE_NAME&per_page=1" --jq '.artifacts[0] | select(.expired == false) | .id' || true)
@@ -101,6 +104,7 @@ jobs:
             openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -pass env:CLIPBOT_ZIP_KEY -in st_in/state.tgz.enc | tar xz -C state
             echo "restored $(ls state | wc -l) state file(s) from artifact $id"; rm -rf st.zip st_in
           else echo "no earlier state"; fi
+      - run: mkdir -p state
       - name: Deploy the GPU app (lane 1)
         if: env.MODAL_TOKEN_ID != ''
         run: modal deploy polished/modal_app.py
