@@ -71,8 +71,10 @@ def render(vod: str, plan: dict, title: str, game: str, brand: str, login: str, 
     import json
     import shutil
     from polished import stages
-    from polished.brand import stings
+    from polished.brand import camp as stings
     t0 = time.time()
+    plan = dict(plan)
+    index = plan.pop("_index", None)                  # the episode's place in its series (intro rotation)
     dst = "/xfer/out/%s.mp4" % key
     rep = "/xfer/out/%s.json" % key
     vol.reload()
@@ -83,7 +85,7 @@ def render(vod: str, plan: dict, title: str, game: str, brand: str, login: str, 
     os.makedirs("/xfer/out", exist_ok=True)
     os.makedirs("/xfer/brand", exist_ok=True)
     work = "/tmp/ep"
-    tag = hashlib.sha1(("%s|%s|%s" % (game, brand, login)).encode()).hexdigest()[:10]
+    tag = hashlib.sha1(("%s|%s|%s|%s" % (game, brand, login, stings.VERSION)).encode()).hexdigest()[:10]
     outro = "/xfer/brand/outro_%s.mp4" % tag
     if not os.path.exists(outro):
         o = stings.outro(game, brand, login, "/tmp/brand", retired)
@@ -91,7 +93,7 @@ def render(vod: str, plan: dict, title: str, game: str, brand: str, login: str, 
         os.replace(outro + ".part", outro)
         vol.commit()
     t_s = time.time()
-    intro = stings.intro(title, game, brand, login, "/tmp/brand", retired)
+    intro = stings.intro(title, game, brand, login, "/tmp/brand", retired, index=index)
     t_sting = time.time() - t_s
     out, r = stages.render_episode(vod, plan, intro, outro, work)
     shutil.copy(out, dst + ".part")

@@ -1,0 +1,105 @@
+{
+ "version": "camp-2026-11-12",
+ "files": {
+  "au_doze.mp4": {
+   "sha256": "4f9bb505b4218771306fcd1eca532213bfdb59664d14cbdd2263e99e53bc5cd9",
+   "bytes": 1927528
+  },
+  "au_flute.mp4": {
+   "sha256": "d7b43024fd28c28c6f94801c8d975aa343f9c892c3926af714784b6326ac2224",
+   "bytes": 2038813
+  },
+  "au_pet.mp4": {
+   "sha256": "2509f1f398db99360f001404a273de4f8b9c8a392d7624ec36dbfe2fe2258eae",
+   "bytes": 1964154
+  },
+  "au_read.mp4": {
+   "sha256": "557df6a497c23157b58504b2aec8eb25a6d35b64a6e34d32a73a0697630eff45",
+   "bytes": 1932640
+  },
+  "autumn_wide.mp4": {
+   "sha256": "f3e13da11a7a18357122b97dd33a2166202730229753fdef3630d5bd2d7ff34b",
+   "bytes": 2983100
+  },
+  "camp_outro_base.mp4": {
+   "sha256": "ddd7c87fbe1276b89705f3aaf08762c19fb4fe4a63f08e9c4f7e0ff079bd8e1d",
+   "bytes": 11663848
+  },
+  "cp_cousin.mp4": {
+   "sha256": "98de614af5fe15eedf1da182bc6572d8a38c85f96ffd51dca608c8fd2312d3c2",
+   "bytes": 1645737
+  },
+  "cp_delamain.mp4": {
+   "sha256": "fb9900315bba0df3c72bec1b81abad55c0bea90a068186f53885bb56d9f3b0a0",
+   "bytes": 3050158
+  },
+  "cp_flute.mp4": {
+   "sha256": "3bf9f081997fa9356c494a38a26d3b0fa31486f3315868d9f8086330eee9d2d3",
+   "bytes": 2177392
+  },
+  "cp_pet.mp4": {
+   "sha256": "0f04ded6ed79923c8c30c6b772a0ebc110be79f81ea1e9d73bb8c32d479003ce",
+   "bytes": 1970419
+  },
+  "cp_roast.mp4": {
+   "sha256": "1ab4eed42b7cb305835d4710b1f369e671750ef1a7debd66bec8cc3eab097704",
+   "bytes": 2139007
+  },
+  "cp_stargaze.mp4": {
+   "sha256": "93e9b2dac633341f17603547adc9f1d25d1ada5036400728e45b7cbefbae3c3a",
+   "bytes": 1986987
+  },
+  "cp_wide.mp4": {
+   "sha256": "a6c2a30ed057fbd725eb39a52290144752132d6f0b4c2a72ac758a6d4eb8c8ba",
+   "bytes": 3086977
+  },
+  "gta_conga.mp4": {
+   "sha256": "fb4110a6190c1fbedb2f27f7850ee8c11c7e3467be937acc53d55313c70c3d65",
+   "bytes": 2070026
+  },
+  "gta_doze.mp4": {
+   "sha256": "58d063aa133162bfb7937395c00b69de97bf58ace4a0f486f38d0a55ca461271",
+   "bytes": 2177839
+  },
+  "gta_flute.mp4": {
+   "sha256": "b1faeddf1413e0ac19bda8b467b21d7c3a50592010df5e4b04cb46241bf5b311",
+   "bytes": 2206116
+  },
+  "gta_gator.mp4": {
+   "sha256": "c4dd57a1ba215cfd7d0b11332e70153044329b0fe9375c60a40207cac880a726",
+   "bytes": 1724025
+  },
+  "gta_icecream.mp4": {
+   "sha256": "4496cc8f275eec4a47d6d5ef5752674a2a4b574427f4bc288a09872d732fd687",
+   "bytes": 1822071
+  },
+  "gta_roast.mp4": {
+   "sha256": "4cd2fa6d422911f41151a50b946ccb4508da61c0dad4e24dcfcc179b44dcb294",
+   "bytes": 2183595
+  },
+  "gta_stargaze.mp4": {
+   "sha256": "0bebe1d0d45870744920e3c06c559cfc265e496a8cf83093bd9040f52f83661d",
+   "bytes": 2022573
+  },
+  "gta_wide.mp4": {
+   "sha256": "cb9efac215f74bd8147b5b6b80743244d407ce64c8d1e52f95b60ded852d7284",
+   "bytes": 2660180
+  },
+  "m2_intro.flac": {
+   "sha256": "acf852df0cffdbdf7ae62e64105e4b9f66df2a3aaf17a6b427dfa85b9d1835a8",
+   "bytes": 337398
+  },
+  "m2_outro.flac": {
+   "sha256": "76b4e016f149f4adab5ef632bb2e9aea598a2014bb5c9347ea88552eab365e84",
+   "bytes": 1394668
+  },
+  "outro_cp.mp4": {
+   "sha256": "e11d1cade466b16ff2b258d01547cdb8b5136f087753b0f1e0d7b71e7955ccd1",
+   "bytes": 12961157
+  },
+  "outro_gta.mp4": {
+   "sha256": "55749a756ae0c600d5ba71adce3d37bed8c0ece1a2823d46c82ac7a677184354",
+   "bytes": 11237569
+  }
+ }
+}

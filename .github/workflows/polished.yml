@@ -120,6 +120,11 @@ jobs:
           [[ "$REDO" =~ ^[0-9]+$ ]] || { echo "bad redo_chunk"; exit 1; }
           rm -rf "state/chunk_$REDO.json" state/analysis.json state/plans.json state/plan_* state/review_*
           echo "chunk $REDO will be re-analysed; plans and reviews start again"
+      - name: Camp sting media (intro/outro footage + music, sha256-checked against manifest.json)
+        env:
+          CAMP_ASSETS_URL: ${{ secrets.CAMP_ASSETS_URL }}
+          CAMP_ASSETS_TOKEN: ${{ secrets.CAMP_ASSETS_TOKEN }}
+        run: python -m polished.brand.camp_fetch
       - name: Deploy the GPU app (lane 1)
         if: env.MODAL_TOKEN_ID != ''
         run: modal deploy polished/modal_app.py
