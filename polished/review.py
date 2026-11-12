@@ -106,6 +106,18 @@ def main():
         b_ = " ".join(w for s, e, w in words if keep[i][0] <= s < keep[i][0] + 6)[:90]
         seam_lines.append("%s  removed %.1fs  ...%s || %s..." % (mmss(t_out), keep[i][0] - keep[i - 1][1], a_, b_))
     cold_text = " ".join(w for s, e, w in words if cold[0] <= s < cold[1])
+
+    def render_t(src):
+        for i, (s, e) in enumerate(keep):
+            if s <= src < e:
+                return cold_len + INTRO_D + pre[i] + (src - s)
+        return None
+    kept_menus = []   # menu screens the planner KEPT on purpose because he talks over them (owner, T2 30 Oct)
+    for m0, m1 in (plan.get("stats", {}).get("menu_kept") or []):
+        r0, r1 = render_t(max(m0, keep[0][0])), render_t(min(m1, keep[-1][1]) - 0.01)
+        if r0 is not None and r1 is not None and r1 > r0:
+            kept_menus.append({"render": "%s-%s" % (mmss(r0), mmss(r1)),
+                               "his_words": " ".join(w for s, e, w in words if m0 <= s < m1)[:400]})
     body_end = cold_len + INTRO_D + acc
     pack = {
         "title": plan["youtube_title"], "description": plan["description"],
@@ -115,6 +127,7 @@ def main():
         "seams": seam_lines[:80], "n_seams": len(seam_lines),
         "first_words_of_body": " ".join(w for s, e, w in words if keep[0][0] <= s < keep[0][0] + 12),
         "last_words_of_body": " ".join(w for s, e, w in words if keep[-1][1] - 12 <= s < keep[-1][1]),
+        "kept_menus": kept_menus,
     }
     prompt = open(os.path.join(HERE, "review_prompt.md"), encoding="utf-8").read()
     prompt = (prompt.replace("{N_IMAGES}", str(len(imgs))).replace("{BRAND}", a.brand or "the streamer")
