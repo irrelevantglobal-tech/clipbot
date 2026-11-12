@@ -20,6 +20,7 @@ on:
       answers: {description: lane 4 (encrypted, from polished/hold.py), default: ""}
       faults: {description: "QA only, ignored when upload=true: comma list (see conductor.FAULT_HELP)", default: ""}
       fresh: {description: "ignore this window's saved state (re-analyse and re-plan; costs GPU + API again)", type: boolean, default: false}
+      redo_chunk: {description: "re-analyse only this saved chunk (its start, VOD seconds) and re-plan the window", default: ""}
   workflow_call:
     inputs:
       vod: {type: string, required: true}
@@ -35,6 +36,7 @@ on:
       answers: {type: string, default: ""}
       faults: {type: string, default: ""}
       fresh: {type: boolean, default: false}
+      redo_chunk: {type: string, default: ""}
 permissions:
   contents: read
   actions: read          # the ledger + state artifacts of earlier runs
@@ -105,6 +107,14 @@ jobs:
             echo "restored $(ls state | wc -l) state file(s) from artifact $id"; rm -rf st.zip st_in
           else echo "no earlier state"; fi
       - run: mkdir -p state
+      - name: Re-analyse one chunk, re-plan the window
+        if: ${{ inputs.redo_chunk != '' }}
+        env:
+          REDO: ${{ inputs.redo_chunk }}
+        run: |
+          [[ "$REDO" =~ ^[0-9]+$ ]] || { echo "bad redo_chunk"; exit 1; }
+          rm -rf "state/chunk_$REDO.json" state/analysis.json state/plans.json state/plan_* state/review_*
+          echo "chunk $REDO will be re-analysed; plans and reviews start again"
       - name: Deploy the GPU app (lane 1)
         if: env.MODAL_TOKEN_ID != ''
         run: modal deploy polished/modal_app.py

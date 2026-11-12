@@ -72,7 +72,7 @@ MENU_MAX_SPEECH = 0.40   # WD2 T2: a 45 s controls screen cut at 51% speech (his
 # stream's own scenes (CLIP "scene" score: starting soon / be right back / ending / resting) are cut
 # whatever is said over them.
 QUIET_MENU_MIN, QUIET_MENU_SPEECH = 60.0, 0.15
-SCENE_TH, SCENE_MIN, SCENE_KEEP = 0.5, 30.0, 1.0
+SCENE_TH, SCENE_MIN, SCENE_KEEP = 0.7, 30.0, 1.0   # probe 12 Nov: starting soon 0.90-0.97, gameplay <= 0.14, post-start menus <= 0.66
 BOUND_GAP, BOUND_CLEAR = 3.0, 1.5
 MIN_EP, MAX_EP = 900.0, 1500.0
 AWAY_MIN, AWAY_KEEP = 20 * 60.0, 2.0     # episodes.py AWAY_MIN: 20 min without a word = nobody there
