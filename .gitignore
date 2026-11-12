@@ -7,3 +7,7 @@ __pycache__/
 *client_secret*
 *.token
 .secrets/
+
+# camp sting media: fetched + sha256-checked by polished/brand/camp_fetch.py (manifest.json), not kept in history
+polished/brand/camp_assets/*.mp4
+polished/brand/camp_assets/*.flac

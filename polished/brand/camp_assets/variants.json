@@ -1,0 +1,148 @@
+{
+ "gta": [
+  {
+   "id": "gta_wide",
+   "file": "gta_wide.mp4",
+   "desc": "Vice Beach at sunset, wide (the approved A shot)",
+   "anchor": "r",
+   "plate_y": 10
+  },
+  {
+   "id": "gta_flute",
+   "file": "gta_flute.mp4",
+   "desc": "the ghost plays the flute by the fire",
+   "anchor": "l",
+   "plate_y": 26
+  },
+  {
+   "id": "gta_roast",
+   "file": "gta_roast.mp4",
+   "desc": "the ghost roasts a marshmallow",
+   "anchor": "l",
+   "plate_y": 26
+  },
+  {
+   "id": "gta_stargaze",
+   "file": "gta_stargaze.mp4",
+   "desc": "the ghost lies on the sand, stargazing",
+   "anchor": "l",
+   "plate_y": 26
+  },
+  {
+   "id": "gta_doze",
+   "file": "gta_doze.mp4",
+   "desc": "the ghost dozes off",
+   "anchor": "l",
+   "plate_y": 26
+  },
+  {
+   "id": "gta_conga",
+   "file": "gta_conga.mp4",
+   "desc": "a conga line dances along the waterline",
+   "anchor": "l",
+   "plate_y": 26
+  },
+  {
+   "id": "gta_icecream",
+   "file": "gta_icecream.mp4",
+   "desc": "the ice-cream cart rolls by",
+   "anchor": "l",
+   "plate_y": 26
+  },
+  {
+   "id": "gta_gator",
+   "file": "gta_gator.mp4",
+   "desc": "a gator waddles past",
+   "anchor": "l",
+   "plate_y": 26
+  }
+ ],
+ "cp": [
+  {
+   "id": "cp_wide",
+   "file": "cp_wide.mp4",
+   "desc": "the Badlands nomad camp at night, Night City on the horizon, wide",
+   "anchor": "l",
+   "plate_y": 26
+  },
+  {
+   "id": "cp_delamain",
+   "file": "cp_delamain.mp4",
+   "desc": "a Delamain cab rolls up past the camp",
+   "anchor": "l",
+   "plate_y": 18
+  },
+  {
+   "id": "cp_flute",
+   "file": "cp_flute.mp4",
+   "desc": "the ghost (Samurai jacket) plays the flute by the fire",
+   "anchor": "l",
+   "plate_y": 10
+  },
+  {
+   "id": "cp_roast",
+   "file": "cp_roast.mp4",
+   "desc": "the ghost roasts a marshmallow",
+   "anchor": "l",
+   "plate_y": 10
+  },
+  {
+   "id": "cp_stargaze",
+   "file": "cp_stargaze.mp4",
+   "desc": "the ghost lies back and stargazes",
+   "anchor": "l",
+   "plate_y": 10
+  },
+  {
+   "id": "cp_pet",
+   "file": "cp_pet.mp4",
+   "desc": "the ghost pets the cat",
+   "anchor": "c",
+   "plate_y": 10
+  },
+  {
+   "id": "cp_cousin",
+   "file": "cp_cousin.mp4",
+   "desc": "the ghost's little cousin peeks out from behind the van",
+   "anchor": "r",
+   "plate_y": 18
+  }
+ ],
+ "autumn": [
+  {
+   "id": "autumn_wide",
+   "file": "autumn_wide.mp4",
+   "desc": "the autumn camp at golden hour, wide (the approved A shot)",
+   "anchor": "c",
+   "plate_y": 10
+  },
+  {
+   "id": "au_flute",
+   "file": "au_flute.mp4",
+   "desc": "the ghost plays the flute by the autumn fire",
+   "anchor": "l",
+   "plate_y": 18
+  },
+  {
+   "id": "au_read",
+   "file": "au_read.mp4",
+   "desc": "the ghost reads on the log",
+   "anchor": "l",
+   "plate_y": 18
+  },
+  {
+   "id": "au_pet",
+   "file": "au_pet.mp4",
+   "desc": "the ghost pets the cat",
+   "anchor": "l",
+   "plate_y": 18
+  },
+  {
+   "id": "au_doze",
+   "file": "au_doze.mp4",
+   "desc": "the ghost dozes by the fire",
+   "anchor": "l",
+   "plate_y": 18
+  }
+ ]
+}

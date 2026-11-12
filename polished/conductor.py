@@ -491,18 +491,20 @@ class LocalLane:
             yield c, r
 
     def render_many(self, vod, jobs, sink, stop):
-        from polished.brand import stings
+        from polished.brand import camp as stings
         b = self.run.ident
         bdir = os.path.join(self.run.a.out, "_brand")
         outro = None
         for k, p, t in jobs:
             if stop.is_set():
                 break
+            p = dict(p)
+            index = p.pop("_index", None)                    # the episode's place in its series (intro rotation)
             for attempt in range(RENDER_TRIES):
                 try:
                     if outro is None:
                         outro = stings.outro(self.run.a.series, b["brand"], b["login"], bdir, b["retired"])
-                    intro = stings.intro(t, self.run.a.series, b["brand"], b["login"], bdir, b["retired"])
+                    intro = stings.intro(t, self.run.a.series, b["brand"], b["login"], bdir, b["retired"], index=index)
                     mp4, rep = stages.render_episode(vod, p, intro, outro, os.path.join(self.run.a.out, "_ep_" + k))
                     dst = os.path.join(self.run.a.out, "%s.mp4" % k)
                     os.replace(mp4, dst)
@@ -663,6 +665,30 @@ def finish(run, man, t_run):
     log("cost this run:", man["cost"], "->", name)
 
 
+def series_base(common, series, vod, first_start):
+    """How many episodes of this series come BEFORE this window, from the worker's episode list (every episode that
+    got a card). Ordered by (VOD id, start second), so a re-run of the same window gets the same number and the
+    intro rotation (camp.pick_variant) never repeats a shot between consecutive episodes, across windows and VODs.
+    None if the list can't be read: the intros then fall back to a hash of the title (no-repeat not guaranteed)."""
+    try:
+        items = common.worker("/clipbot/eplist").get("items", [])
+    except Exception as e:   # noqa: BLE001
+        log("episode list unreadable for the intro rotation (%s): title hash instead" % str(e)[:80])
+        return None
+    n = 0
+    for it in items:
+        if (it.get("series") or series) != series:
+            continue
+        parts = str(it.get("marker", "")).rsplit(":", 2)
+        try:
+            v, s = int(parts[-2]), float(parts[-1])
+        except (ValueError, IndexError):
+            continue
+        if (v, s) < (int(vod), float(first_start)):
+            n += 1
+    return n
+
+
 def holes_of(plan_vod):
     ks = plan_vod["keep"]
     return [[round(x[1], 2), round(y[0], 2)] for x, y in zip(ks, ks[1:]) if y[0] - x[1] > 0.05]
@@ -672,11 +698,14 @@ def process(run, gpu, an, plans, lo, man, common, episodes):
     """Render, gate, review, upload IN ORDER. Returns a hold reason or None."""
     a = run.a
     jobs, meta = [], {}
+    base = series_base(common, a.series, a.vod, plans[0]["bounds"][0] + lo) if plans else None
     for i, p in enumerate(plans, 1):
         pv = {"keep": [[round(s + lo, 3), round(e + lo, 3)] for s, e in p["keep"]],
               "cold": [round(p["cold"][0] + lo, 3), round(p["cold"][1] + lo, 3)]}
         key = hashlib.sha1(json.dumps([a.vod, pv, p["title"], run.brand, a.series]).encode()).hexdigest()[:16]
         start, end = round(p["bounds"][0] + lo, 2), round(p["bounds"][1] + lo, 2)
+        if base is not None:
+            pv["_index"] = base + i - 1                    # after the key: the shot never changes the episode's identity
         meta[key] = {"i": i, "plan": p, "pv": pv, "start": start, "end": end}
         jobs.append((key, pv, p["title"]))
     if not jobs:
