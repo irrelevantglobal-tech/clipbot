@@ -28,10 +28,17 @@ def month_start(now=None):
 
 
 def modal_spent(now=None):
-    """Real Modal spend this calendar month (UTC), to the last full hour."""
+    """Real Modal spend this calendar month (UTC): whole days from the daily report, today from the hourly
+    one (hourly reports may not span more than 7 days; the first T3 run held on exactly that, 12 Nov)."""
+    import warnings
     import modal.billing
-    rows = modal.billing.workspace_billing_report(start=month_start(now), resolution="h")
-    return float(sum(float(r["cost"]) for r in rows))
+    now = now or dt.datetime.now(dt.timezone.utc)
+    today = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        days = modal.billing.workspace_billing_report(start=month_start(now), end=today, resolution="d")             if today > month_start(now) else []
+        hours = modal.billing.workspace_billing_report(start=today, resolution="h")
+    return float(sum(float(r["cost"]) for r in list(days) + list(hours)))
 
 
 def modal_estimate(gpu, seconds, cpu=4.0, mem_gib=8.0, egress_gib=0.0):
