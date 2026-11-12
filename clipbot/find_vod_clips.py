@@ -13,8 +13,11 @@ Signals (ported from the AC4 / Last Pirates miners, which were checked against t
     the quietest shot in Last Pirates was the funniest one.
   * whisper repetition loops and "thank you" card hallucinations are rejected
   * moments already clipped on Twitch are skipped (the clips lane uploads those)
-Then an AI re-rank picks 5 of the top 15 and writes titles. If that is unavailable the
-heuristic order is used. the owner approves every clip in Discord, so this is a shortlist.
+Then (picker v2, 2026-11-12, after the owner rejected 0 of 24 cards) the top 12 are re-heard with a better model and
+an AI judge (judge.py) scores each one; only those that clear the bar are offered, so a window gives 0 to --picks
+clips, cut on phrase boundaries from setup to payoff (snap). If the judge is down, the old AI re-rank runs over the
+candidates above a heuristic floor instead. Every cut is checked against its own audio before it is offered
+(aligned): footage that does not say what the transcript said is never sent. The owner approves every clip in Discord.
 """
 import argparse
 import json
@@ -24,7 +27,7 @@ import shutil
 import subprocess
 import sys
 
-from . import common, render
+from . import chat, common, judge, render
 
 GAP = 1.2
 MAX_WIN = 40.0
@@ -41,7 +44,12 @@ REACT = {
     "excuse me": 4, "you what": 3, "shut up": 3, "that's mad": 3, "i'm dead": 3,
     "did you see": 3, "oh dear": 3, "bro": 1.5, "dude": 1.5, "wait wait": 3, "oh no": 3,
     "are you serious": 4, "how did": 2, "what was that": 4, "help": 1.5, "run": 1,
+    # GTA 6 (marathon from 18 Nov): deaths, arrests, cops and carnage are the moments
+    "wasted": 4, "busted": 4, "mission failed": 3, "five star": 3, "5 star": 3, "wanted level": 2,
+    "the cops": 2, "police": 1.5, "ran me over": 4, "run him over": 3, "ran him over": 3, "blew up": 3,
+    "exploded": 3, "crashed": 2, "i'm dying": 3, "i'm crying": 3,
 }
+LAUGH = re.compile(r"\b(ha(ha)+|(ha ){2,}ha|lol|lmao)\b", re.I)
 SWEAR = re.compile(r"\b(fuck\w*|shit\w*|bastard|bollocks|twat|prick|dick\w*|arse\w*|wank\w*|cunt|bloody|piss\w*)\b", re.I)
 WORD = re.compile(r"[a-z']+", re.I)
 JUNK = re.compile(r"^(thank you\.?|thanks for watching!?|you|bye\.?)$", re.I)
@@ -81,6 +89,7 @@ def score(u):
     dur = max(u[-1]["e"] - u[0]["s"], 0.1)
     s = sum(low.count(p) * w for p, w in REACT.items())
     s += len(SWEAR.findall(low)) * 1.5
+    s += min(3, len(LAUGH.findall(low))) * 2
     rep = repetition(toks)
     if rep >= 3:
         s += (rep - 2) * 4
@@ -118,7 +127,10 @@ def peaks(wav, step=0.5):
     return out
 
 
-def windows(words, pk, dur, exclude):
+def windows(words, pk, dur, exclude, base=0.0, tail=True):
+    """Scored, merged stretches. base = VOD second of window second 0; tail = this window runs to the stream's end.
+    The starting/ending-screen guards apply to the STREAM's first 8 min and last minute only: on 2 h windows they
+    used to throw away the first 8 min and last minute of every window (2026-11-12)."""
     scored = []
     for u in utterances(words):
         sc = score(u)
@@ -133,7 +145,7 @@ def windows(words, pk, dur, exclude):
             merged.append(dict(x))
     out = []
     for m in merged:
-        if m["s"] < 480 or m["e"] > dur - 60:
+        if m["s"] + base < 480 or (tail and m["e"] > dur - 60):
             continue                                    # starting / ending screens
         if any(not (m["e"] < a - 5 or m["s"] > b + 5) for a, b in exclude):
             continue                                    # already a Twitch clip
@@ -175,6 +187,79 @@ def expand(m, words, dur):
 
 def text_between(words, s, e):
     return " ".join(w["w"] for w in words if s <= w["s"] <= e)
+
+
+PHRASE_GAP = 0.35     # a pause this long between words is a phrase boundary
+CUT_MIN, CUT_FLOOR = 14.0, 8.0
+
+
+def _phrase_start(ws, i, limit=8.0):
+    """Index of the first word of the phrase holding ws[i]; at most `limit` s back (then the widest pause in reach)."""
+    k, best, best_gap = i, i, -1.0
+    while k > 0 and ws[i]["s"] - ws[k - 1]["s"] <= limit:
+        gap = ws[k]["s"] - ws[k - 1]["e"]
+        if gap >= PHRASE_GAP:
+            return k
+        if gap > best_gap:
+            best, best_gap = k, gap
+        k -= 1
+    return k if k == 0 else best
+
+
+def snap(words, s, e, dur):
+    """Cut on speech boundaries (Owner's rejects 11/12 Nov: lines cut mid-sentence, single lines padded to 12 s with
+    silence). Start at the beginning of the phrase holding `s`; end once the phrase or laugh holding `e` is over, never
+    inside the next word; 14-58 s, but a moment that is naturally 8-14 s long stays short rather than padded."""
+    ws = sorted((w for w in words if w["e"] > w["s"] >= 0), key=lambda w: w["s"])
+    if not ws:
+        return round(max(0.0, s), 2), round(min(dur, e), 2)
+    i = next((k for k, w in enumerate(ws) if w["s"] >= s - 0.5), len(ws) - 1)
+    i = _phrase_start(ws, i)
+    j = max([k for k, w in enumerate(ws) if w["e"] <= e + 0.5] or [i])
+    j = max(i, j)
+    while j + 1 < len(ws) and ws[j + 1]["s"] - ws[j]["e"] < 0.6 and ws[j + 1]["e"] - e < 6:
+        j += 1                                       # finish the sentence / laugh
+    # too short: add whole phrases before (setup), then after
+    while ws[j]["e"] - ws[i]["s"] < CUT_MIN and i > 0 and ws[j]["e"] - ws[i - 1]["s"] <= MAX_LEN - 2 \
+            and ws[i]["s"] - ws[i - 1]["e"] < 4.0:
+        i = _phrase_start(ws, i - 1)
+    while ws[j]["e"] - ws[i]["s"] < CUT_MIN and j + 1 < len(ws) and ws[j + 1]["s"] - ws[j]["e"] < 2.0:
+        j += 1
+    start = ws[i]["s"] - 0.4
+    if i > 0:
+        start = max(start, ws[i - 1]["e"] + 0.05)
+    end = ws[j]["e"] + 0.8
+    if j + 1 < len(ws):
+        end = min(end, ws[j + 1]["s"] - 0.05)
+    start, end = max(0.0, start), min(dur, end)
+    if end - start > MAX_LEN:                        # keep the payoff, drop the oldest setup, start on a phrase
+        ks = [k for k in range(i + 1, j + 1) if end - (ws[k]["s"] - 0.4) <= MAX_LEN]
+        heads = [k for k in ks if ws[k]["s"] - ws[k - 1]["e"] >= PHRASE_GAP]
+        if ks:
+            k = (heads or ks)[0]
+            start = max(ws[k]["s"] - 0.4, ws[k - 1]["e"] + 0.05)
+        else:
+            start = end - MAX_LEN
+    if end - start < CUT_FLOOR:                      # pad only up to the floor, mostly after (the reaction)
+        pad = CUT_FLOOR - (end - start)
+        start, end = max(0.0, start - pad * 0.3), min(dur, end + pad * 0.7)
+    return round(start, 2), round(end, 2)
+
+
+def tokens(words):
+    return {t for w in words for t in WORD.findall(w["w"].lower()) if len(t) >= 3}
+
+
+def aligned(expected, got, need=0.3):
+    """Does the downloaded clip say what the transcript said at that time? On 4-12 Nov every first window of a live
+    stream cut footage from hours 0-2 under a transcript of hours 2-4 (the download recorded from the live edge).
+    Share of the transcript's words heard again in the clip; measured 0.0-0.1 for those, 0.5-0.9 for good cuts.
+    Too few words to tell = not verified = not offered."""
+    exp = tokens(expected)
+    if len(exp) < 5:
+        return False, 0.0
+    r = len(exp & tokens(got)) / len(exp)
+    return r >= need, round(r, 2)
 
 
 def rerank(cands, vod_title, n_pick=N_PICK):
@@ -244,6 +329,87 @@ def moment_cands(marks, wins, words, dur, exclude):
     return out
 
 
+def audio_base(lo, hi):
+    """VOD second of the window audio's first sample. A section starting at 0 is "no start time" to yt-dlp, and on a
+    stream that is still live it then RECORDS FROM THE LIVE EDGE (4-12 Nov: every hour-0 window transcribed hours 2-4,
+    took 2 h instead of 12 min, and cut its clips from hours 0-2: wrong footage on every card). Such a window starts
+    1 s in, so it seeks like every other window. Whole-VOD runs (no section) are unaffected."""
+    return max(lo, 1.0) if (lo > 0 or hi > 0) else 0.0
+
+
+def shortlist(wins, words, dur):
+    """The best-scoring stretches, at least SPACING apart, padded with expand() (the judge gets more around them)."""
+    cands = []
+    for w in sorted(wins, key=lambda w: -w["score"]):
+        s, e = expand(w, words, dur)
+        if all(abs(s - c["s"]) > SPACING for c in cands):
+            cands.append({"s": s, "e": e, "score": round(w["score"], 1), "peak": w["peak"], "text": text_between(words, s, e)})
+        if len(cands) == N_CAND:
+            break
+    return cands
+
+
+def choose(cands, wav, dur, stream_title, n_pick, words, ask=None):
+    """[(candidate, title)] worth offering, best first: everything that clears the floor and no veto, so the caller can
+    fall through to the next one when a cut fails its footage checks. The caller offers at most n_pick of them, and
+    none at all if nothing in the window is good enough (owner rejected 0/24 forced picks on 11-12 Nov).
+    Each candidate's s/e/text are its final cut."""
+    judged = False
+    if cands:
+        try:
+            judged = judge.judge(wav, cands, dur, stream_title, **({"ask": ask} if ask else {}))
+        except Exception as e:                       # never lose a window to the judge: fall back, loudly
+            print(f"judge failed ({type(e).__name__}: {str(e)[:160]}), falling back to the ranker + floor")
+    out = []
+
+    def take(c, s, e, ws, title):
+        if any(s < o["e"] + 5 and e > o["s"] - 5 for o, _ in out):
+            return False
+        c.update(s=s, e=e, text=text_between(ws, s, e))
+        out.append((c, title))
+        return True
+
+    if judged:
+        pool = [c for c in cands if c.get("judge") and not judge.vetoed(c["judge"]) and judge.rank(c) >= judge.FLOOR]
+        pool.sort(key=lambda c: -judge.rank(c))
+        for c in pool:
+            b = c["judge"]["bounds"] or (c["s"], c["e"])
+            ws = c.get("words") or words
+            take(c, *snap(ws, b[0], b[1], dur), ws, c["judge"]["title"])
+        print(f"{len(out)} candidates clear the floor {judge.FLOOR} with no veto: "
+              + ", ".join(f"{c['s']:.0f}s rank {judge.rank(c):.2f}" for c, _ in out))
+        return out
+    # judge down: the old AI ranker, only over stretches above the heuristic floor
+    strong = [c for c in cands if c["score"] >= judge.FALLBACK_FLOOR or chat.boost(*c.get("chat", (0, 0))) >= 0.8]
+    print(f"no judge: {len(strong)} of {len(cands)} candidates clear the heuristic floor {judge.FALLBACK_FLOOR}")
+    if not strong:
+        return out
+    order = rerank(strong, stream_title, min(5, len(strong))) or []
+    order += [(i, "") for i in range(len(strong)) if i not in {k for k, _ in order}]
+    for i, title in order:
+        c = strong[i]
+        ws = c.get("words") or words
+        take(c, *snap(ws, c["s"], c["e"], dur), ws, title)
+    return out
+
+
+STILL_MAX = 0.85   # share of frozen 0.5 s steps above which a cut is a static screen (the 12 Nov wardrobe menu: 0.91)
+
+
+def stillness(path):
+    """Share of 0.5 s steps in which the picture barely changes (mean |diff| < 2 of 255 at 160x90 grey).
+    Menus, inventories, maps and paused screens sit near 1; his approved clips mostly below 0.45."""
+    import numpy as np
+    w, h = 160, 90
+    raw = subprocess.run(["ffmpeg", "-v", "error", "-i", path, "-vf", f"fps=2,scale={w}:{h},format=gray", "-f", "rawvideo", "-"],
+                         capture_output=True).stdout
+    fr = np.frombuffer(raw, np.uint8)[: len(raw) // (w * h) * w * h].reshape(-1, h, w).astype(np.float32)
+    if len(fr) < 3:
+        return 1.0                                   # cannot tell = treat as static (never offer blind)
+    d = np.abs(np.diff(fr, axis=0)).mean(axis=(1, 2))
+    return round(float((d < 2.0).mean()), 2)
+
+
 def quote_title(text):
     t = re.sub(r"\s+", " ", text).strip()
     words = t.split()
@@ -263,6 +429,7 @@ def main():
     a = ap.parse_args()
     windowed = a.lo > 0 or a.hi > 0
     batch = f"{a.vod}-{int(a.lo)}" if windowed else a.vod
+    base = audio_base(a.lo, a.hi)
     os.makedirs(a.out, exist_ok=True)
     url = f"https://www.twitch.tv/videos/{a.vod}"
 
@@ -274,13 +441,13 @@ def main():
     audio = os.path.join(a.out, "audio.m4a")
     wav = os.path.join(a.out, "audio.wav")
     if not os.path.exists(wav):
-        section = ["--download-sections", f"*{a.lo:.2f}-{a.hi:.2f}" if a.hi else f"*{a.lo:.2f}-inf"] if windowed else []
+        section = ["--download-sections", f"*{base:.2f}-{a.hi:.2f}" if a.hi else f"*{base:.2f}-inf"] if windowed else []
         subprocess.run(["yt-dlp", "-q", "--no-progress", "-N", "8", "-f", "Audio_Only/bestaudio", *section, "-o", audio, url], check=True)
         cut = ["-t", str(a.max_seconds)] if a.max_seconds else []
         subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", audio, *cut, "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", wav], check=True)
         os.remove(audio)
-    dur = render.duration(wav)                       # window-relative from here on; a.lo turns it back into VOD time
-    print(f"audio {dur/60:.1f} min" + (f" (VOD {a.lo/3600:.2f} h to {(a.lo + dur)/3600:.2f} h)" if windowed else ""))
+    dur = render.duration(wav)                       # window-relative from here on; base turns it back into VOD time
+    print(f"audio {dur/60:.1f} min" + (f" (VOD {base/3600:.2f} h to {(base + dur)/3600:.2f} h)" if windowed else ""))
 
     tpath = os.path.join(a.out, "transcript.json")
     if os.path.exists(tpath):
@@ -292,50 +459,76 @@ def main():
     if len(words) < 200:
         raise SystemExit("transcript is nearly empty; refusing to pick clips from nothing")
 
-    exclude = [(x - a.lo, y - a.lo) for x, y in common.vod_clips(a.vod) if y > a.lo and x < a.lo + dur]
+    exclude = [(x - base, y - base) for x, y in common.vod_clips(a.vod) if y > base and x < base + dur]
     print(f"{len(exclude)} existing Twitch clips excluded")
-    wins = windows(words, peaks(wav), dur, exclude)
-    wins.sort(key=lambda w: -w["score"])
-    cands = []
-    for w in wins:
-        s, e = expand(w, words, dur)
-        if all(abs(s - c["s"]) > SPACING for c in cands):
-            cands.append({"s": s, "e": e, "score": round(w["score"], 1), "peak": w["peak"],
-                          "text": text_between(words, s, e)})
-        if len(cands) == N_CAND:
-            break
-    marked = moment_cands(moments(a.vod, a.lo, dur), wins, words, dur, exclude)
+    wins = windows(words, peaks(wav), dur, exclude, base=base, tail=not a.hi)
+    cands = shortlist(wins, words, dur)
+    marked = moment_cands(moments(a.vod, base, dur), wins, words, dur, exclude)
     cands = [c for c in cands if all(abs(c["s"] - m["s"]) > SPACING for m in marked)]
-    print(f"{len(wins)} scored windows -> {len(cands)} candidates, {len(marked)} marked moments")
-    if not cands and not marked:
-        raise SystemExit("no candidates")
+    tl = chat.timeline(a.vod, base, base + dur + chat.AFTER) if cands else []
+    for c in cands:
+        c["chat"] = chat.around(tl, c["s"] + base, c["e"] + base)
+    print(f"{len(wins)} scored windows -> {len(cands)} candidates, {len(marked)} marked moments; "
+          f"{len(tl)} chat messages, {sum(1 for c in cands if c['chat'][0])} candidates with chat after them")
 
-    picks = (rerank(cands, v["title"], a.picks) or [(i, "") for i in range(min(a.picks, len(cands)))]) if cands else []
-    chosen = [(cands[i], title) for i, title in picks] + [(m, m["note"]) for m in marked]
-    chosen.sort(key=lambda p: p[0]["s"])
+    ranked = choose(cands, wav, dur, v["title"], a.picks, words)
+    queue = [(m, m["note"]) for m in marked] + ranked   # crew-marked moments are always offered, as before
+    tries = len(marked) + min(len(ranked), a.picks + 4)  # a few spares for cuts that fail the footage checks
 
-    clips = []
-    for n, (c, title) in enumerate(chosen, 1):
+    clips, refused, static, picked, tried = [], [], [], 0, 0
+    for c, title in queue[:tries]:
+        marked_one = "note" in c
+        if not marked_one and picked >= a.picks:
+            break
+        tried += 1
+        n = len(clips) + 1
         raw = os.path.join(a.out, f"raw{n}.mp4")
         tmp = raw + ".part.mp4"
         subprocess.run(["yt-dlp", "-q", "--no-progress", "-N", "8", "-f", render.VOD_FORMAT,
-                        "--download-sections", f"*{c['s'] + a.lo:.2f}-{c['e'] + a.lo:.2f}", "--force-keyframes-at-cuts",
+                        "--download-sections", f"*{c['s'] + base:.2f}-{c['e'] + base:.2f}", "--force-keyframes-at-cuts",
                         "-o", tmp, url], check=True)
         render.require_1080(tmp, f"clip {n} source")
+        heard = render.transcribe(tmp)               # the captions' words; also proves the footage is the moment
+        ok, r = aligned([w for w in c.get("words") or words if c["s"] <= w["s"] <= c["e"]], heard)
+        if not ok and not marked_one:                # a /moment mark has no transcript claim to check
+            print(f"REFUSED {c['s'] + base:.0f}-{c['e'] + base:.0f}s: the footage does not say what the transcript said "
+                  f"there (match {r}). Not offered.")
+            refused.append(round(c["s"] + base))
+            os.remove(tmp)
+            continue
+        still = stillness(tmp)
+        jd = c.get("judge") or {}
+        if still >= STILL_MAX and not marked_one and jd.get("kind") != "scare":
+            print(f"SKIPPED {c['s'] + base:.0f}-{c['e'] + base:.0f}s: the picture is a static screen ({still:.0%} frozen: "
+                  "menu, map, inventory or pause). Trying the next one.")
+            static.append(round(c["s"] + base))
+            os.remove(tmp)
+            continue
         shutil.move(tmp, raw)
+        picked += 0 if marked_one else 1
         title = title or quote_title(c["text"])
-        info = render.render(raw, os.path.join(a.out, f"clip{n}.mp4"), os.path.join(a.out, f"preview{n}.mp4"), hook=title)
+        info = render.render(raw, os.path.join(a.out, f"clip{n}.mp4"), os.path.join(a.out, f"preview{n}.mp4"), hook=title,
+                             words=heard)
         # raw{n}.mp4 stays in the artifact so a title edited in Discord can be re-rendered
         copy = common.clip_copy(title, stream_title=v["title"], transcript=c["text"])
-        clips.append({"n": n, "start": round(c["s"] + a.lo, 2), "end": round(c["e"] + a.lo, 2), "title": title, "score": c["score"],
-                      "quote": c["text"][:300], **({"marked": True} if "note" in c else {}), **copy, **info})
-        print(f"clip {n}: {c['s'] + a.lo:.0f}-{c['e'] + a.lo:.0f}s score {c['score']} -> {info}")
+        # the signals ride along in the manifest, so later approvals can re-calibrate the floor (judge.py)
+        clips.append({"n": n, "start": round(c["s"] + base, 2), "end": round(c["e"] + base, 2), "title": title, "score": c["score"],
+                      **({"judge": jd["score"], "kind": jd["kind"], "who": jd["who"], "rank": round(judge.rank(c), 2)} if jd else {}),
+                      "match": r, "still": still, **({"chat": list(c["chat"])} if c.get("chat") else {}),
+                      "quote": c["text"][:300], **({"marked": True} if marked_one else {}), **copy, **info})
+        print(f"clip {n}: {c['s'] + base:.0f}-{c['e'] + base:.0f}s score {c['score']} judge {jd.get('score')} "
+              f"match {r} still {still} -> {info}")
+    if len(refused) >= 2 and len(refused) * 2 >= tried:
+        # most cuts landing somewhere else = the window's timing is wrong, not one bad moment: fail loudly
+        raise SystemExit(f"{len(refused)} of {tried} clips did not match their transcript (at {refused}); "
+                         "the audio and the video disagree on time. Nothing offered.")
 
-    json.dump({"vod": a.vod, "batch": batch, "window": [a.lo, a.lo + dur] if windowed else None, "kind": "vod",
-               "vod_title": v["title"], "vod_created": v["created_at"], "clips": clips},
+    json.dump({"vod": a.vod, "batch": batch, "window": [base, base + dur] if windowed else None, "kind": "vod",
+               "vod_title": v["title"], "vod_created": v["created_at"], "clips": clips,
+               **({"refused": refused} if refused else {}), **({"static": static} if static else {})},
               open(os.path.join(a.out, "manifest.json"), "w", encoding="utf-8"), ensure_ascii=False, indent=1)
     os.remove(wav)
-    print("manifest written")
+    print(f"manifest written: {len(clips)} clip(s)" + ("" if clips else ", nothing in this stretch cleared the bar"))
 
 
 if __name__ == "__main__":
