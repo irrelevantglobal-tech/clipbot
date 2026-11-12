@@ -57,7 +57,7 @@ step_check() {
   if ffmpeg -v error -f lavfi -i testsrc=size=1920x1080:rate=60:duration=0.5 -c:v h264_nvenc -f null - ; then
     echo "NVENC ok"
   else
-    echo "NVENC unavailable here: renders fall back to libx264"
+    echo "NVENC unavailable here: renders fall back to libx264 (caps=${NVIDIA_DRIVER_CAPABILITIES:-unset}; encode lib: $(ls /usr/lib/x86_64-linux-gnu/libnvidia-encode.so* /usr/lib64/libnvidia-encode.so* 2>/dev/null | head -1 || echo none))"
   fi
   echo SETUP_DONE
 }

@@ -166,9 +166,9 @@ class Host:
             raise VastError(f"step {step}: SSH did not come back within {int(timeout) + 90} s")
         out = (r.stdout or "") + (r.stderr or "")
         if r.returncode == 124 or r.returncode == 137:
-            raise VastError(f"step {step}: TIMED OUT after {int(timeout)} s on the box; last output: {out[-700:]}")
+            raise VastError(f"step {step}: TIMED OUT after {int(timeout)} s on the box; last output: {out[-2000:]}")
         if check and r.returncode:
-            raise VastError(f"step {step} failed ({r.returncode}) after {time.time() - t0:.0f} s: {out[-700:]}")
+            raise VastError(f"step {step} failed ({r.returncode}) after {time.time() - t0:.0f} s: {out[-2000:]}")
         print(f"  [vast] {step}: ok in {time.time() - t0:.0f} s", flush=True)
         return r.stdout
 
