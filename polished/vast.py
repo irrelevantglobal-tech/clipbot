@@ -151,22 +151,40 @@ class Host:
         self.dst = f"root@{host}"
         self.port, self.keyfile = port, keyfile
 
-    def run(self, cmd, timeout=3600, check=True):
-        r = subprocess.run(["ssh", *self.base, self.dst, "bash -lc " + shlex.quote(cmd)],
-                           capture_output=True, text=True, timeout=timeout)
+    def run(self, cmd, timeout=600, check=True, step="remote"):
+        """One NAMED step, time-boxed ON THE BOX (`timeout` kills it there, so a hang ends the step instead of
+        idling a paid box), output kept in /root/logs/<step>.log and its tail returned/printed. The local
+        timeout is only a backstop for a dead SSH link."""
+        name = "".join(c if c.isalnum() or c in "-_" else "_" for c in step)[:40]
+        wrapped = ("mkdir -p /root/logs; timeout -k 15 %d bash -lc %s > /root/logs/%s.log 2>&1; rc=$?; "
+                   "tail -c 2000 /root/logs/%s.log; exit $rc" % (int(timeout), shlex.quote(cmd), name, name))
+        t0 = time.time()
+        print(f"  [vast] {step}: start (limit {int(timeout)} s)", flush=True)
+        try:
+            r = subprocess.run(["ssh", *self.base, self.dst, wrapped], capture_output=True, text=True, timeout=timeout + 90)
+        except subprocess.TimeoutExpired:
+            raise VastError(f"step {step}: SSH did not come back within {int(timeout) + 90} s")
+        out = (r.stdout or "") + (r.stderr or "")
+        if r.returncode == 124 or r.returncode == 137:
+            raise VastError(f"step {step}: TIMED OUT after {int(timeout)} s on the box; last output: {out[-700:]}")
         if check and r.returncode:
-            raise VastError(f"remote `{cmd[:80]}` failed ({r.returncode}): {(r.stdout + r.stderr)[-600:]}")
+            raise VastError(f"step {step} failed ({r.returncode}) after {time.time() - t0:.0f} s: {out[-700:]}")
+        print(f"  [vast] {step}: ok in {time.time() - t0:.0f} s", flush=True)
         return r.stdout
 
-    def put(self, local, remote, timeout=1800):
+    def put(self, local, remote, timeout=300, step="upload"):
         b = [x if x != "-p" else "-P" for x in self.base]
+        t0 = time.time()
         subprocess.run(["scp", *b, "-q", local, f"{self.dst}:{remote}"], check=True, timeout=timeout)
+        print(f"  [vast] {step}: {os.path.getsize(local) / 1e6:.0f} MB up in {time.time() - t0:.0f} s", flush=True)
 
-    def get(self, remote, local, timeout=3600):
+    def get(self, remote, local, timeout=1800, step="download"):
         b = [x if x != "-p" else "-P" for x in self.base]
         tmp = local + ".part"
+        t0 = time.time()
         subprocess.run(["scp", *b, "-q", f"{self.dst}:{remote}", tmp], check=True, timeout=timeout)
         os.replace(tmp, local)
+        print(f"  [vast] {step}: {os.path.getsize(local) / 1e6:.0f} MB down in {time.time() - t0:.0f} s", flush=True)
 
 
 def keypair(d):
@@ -229,7 +247,7 @@ class Job:
             if st == "running" and i.get("ssh_host") and i.get("ssh_port"):
                 h = Host(i["ssh_host"], i["ssh_port"], key)
                 try:
-                    if "ok" in h.run("echo ok", timeout=40):
+                    if "ok" in h.run("echo ok", timeout=40, step="ssh-ready"):
                         return h
                 except Exception:   # noqa: BLE001 - sshd not up yet
                     pass

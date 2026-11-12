@@ -385,12 +385,18 @@ class VastLane:
     def _setup(self):
         tar = os.path.join(self.job.dir, "repo.tgz")
         subprocess.run(["tar", "czf", tar, "-C", ROOT, "polished", "clipbot/style/fonts", "fonts"], check=True)
-        self.host.run("mkdir -p /root/repo")
-        self.host.put(tar, "/root/repo.tgz")
-        self.host.run("cd /root/repo && tar xzf /root/repo.tgz && rm /root/repo.tgz")
+        self.host.run("mkdir -p /root/repo", timeout=60, step="mkdir")
+        self.host.put(tar, "/root/repo.tgz", step="upload code")
+        self.host.run("cd /root/repo && tar xzf /root/repo.tgz && rm /root/repo.tgz", timeout=120, step="unpack code")
         t0 = time.time()
-        out = self.host.run("cd /root/repo && PY=/opt/conda/bin/python bash polished/setup_gpu.sh", timeout=1800)
-        log("  vast setup %.0f s: %s" % (time.time() - t0, " | ".join(out.strip().splitlines()[-3:])))
+        out = ""
+        for st, lim in (("apt", 300), ("ffmpeg", 300), ("pip", 900), ("models", 900), ("check", 120)):
+            self.job.check_money()
+            o = self.host.run("cd /root/repo && PY=/opt/conda/bin/python bash polished/setup_gpu.sh " + st,
+                              timeout=lim, step="setup " + st)
+            log("    %s: %s" % (st, " | ".join(o.strip().splitlines()[-2:])[:240]))
+            out += o
+        log("  vast setup %.0f s" % (time.time() - t0))
         if "SETUP_DONE" not in out:
             raise RuntimeError("vast setup did not finish")
         return self
@@ -400,16 +406,17 @@ class VastLane:
         return self.job.__exit__(*exc)
 
     def _py(self, args, timeout):
-        return self.host.run("cd /root/repo && /opt/conda/bin/python -m polished.worker " + args, timeout=timeout)
+        return self.host.run("cd /root/repo && /opt/conda/bin/python -m polished.worker " + args, timeout=timeout,
+                             step=args.split()[0] + " " + args.split()[2][:12])
 
     def analyze_many(self, vod, todo):
         for c in todo:
             self.job.check_money()
             rp = "/root/an_%d.json" % int(c[0])
-            self._py("analyze %s %.3f %.3f %s" % (vod, c[0], c[1], rp), timeout=3600)
+            self._py("analyze %s %.3f %.3f %s" % (vod, c[0], c[1], rp), timeout=1800)
             loc = os.path.join(self.job.dir, "an.json")
-            self.host.get(rp, loc)
-            self.host.run("rm -f " + rp)
+            self.host.get(rp, loc, timeout=300, step="get analysis")
+            self.host.run("rm -f " + rp, timeout=60, step="cleanup")
             yield c, jload(loc)
 
     def render_many(self, vod, jobs, sink, stop):
