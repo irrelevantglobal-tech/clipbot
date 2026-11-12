@@ -5,7 +5,16 @@
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
-apt-get install -y -qq ffmpeg fonts-dejavu-core >/dev/null
+apt-get install -y -qq fonts-dejavu-core xz-utils curl >/dev/null
+# ffmpeg >= 5.1 is required (the kit and the render use -fps_mode). Ubuntu 22.04 ships 4.4, which also could
+# not open NVENC on a current driver (first Vast run, 12 Nov). Static GPL build with NVENC, from BtbN's releases.
+FFV=${FFV:-n8.1}
+mkdir -p /opt/ffmpeg
+curl -fsSL "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-${FFV}-latest-linux64-gpl-${FFV#n}.tar.xz"   | tar xJ -C /opt/ffmpeg --strip-components=1
+export PATH=/opt/ffmpeg/bin:$PATH
+echo 'export PATH=/opt/ffmpeg/bin:$PATH' > /etc/profile.d/00-ffmpeg.sh
+ffmpeg -hide_banner -version | head -1
+ffmpeg -hide_banner -h full 2>/dev/null | grep -q -- "-fps_mode" || { echo "ffmpeg too old (no -fps_mode)"; exit 1; }
 PY=${PY:-python3}
 $PY -m pip install -q -r polished/requirements-gpu.txt
 SITE=$($PY -c "import site,sys;print(next(p for p in site.getsitepackages() if p.endswith('site-packages')))")
