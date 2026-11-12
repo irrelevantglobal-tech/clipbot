@@ -279,13 +279,25 @@ def _vf(i, a0=None, a1=None):
                 "pad=1920:1080:-1:-1,setsar=1,format=yuv420p[v%d]" % i)
 
 
+STING_I = -34.0   # set per episode by render_episode from the measured body (WD2 stream level = -34)
+
+
+def lufs(path, s, e):
+    """Integrated loudness of file [s, e) (ebur128), or None."""
+    r = subprocess.run([FF, "-hide_banner", "-nostats", "-ss", "%.3f" % s, "-i", path, "-t", "%.3f" % (e - s), "-vn",
+                        "-af", "ebur128", "-f", "null", "-"], capture_output=True, text=True)
+    import re
+    m = re.findall(r"I:\s+(-?[\d.]+) LUFS", r.stderr)
+    return float(m[-1]) if m else None
+
+
 def _af(i, a0=None, a1=None, norm=False, dur=None):
     f = "[%d:a]" % i
     if a0 is not None:
         f += "atrim=start=%.4f:end=%.4f,asetpts=PTS-STARTPTS," % (a0, a1)
     f += "aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo"
     if norm:   # stings matched DOWN to the stream level, never the body up (wd2 rule)
-        f += ",loudnorm=I=-34:TP=-3:LRA=11"
+        f += ",loudnorm=I=%.1f:TP=-3:LRA=11" % STING_I
     if dur:    # 20 ms de-click at every seam
         f += ",afade=t=in:st=0:d=0.02,afade=t=out:st=%.3f:d=0.02" % max(dur - 0.02, 0)
     return f + "[a%d]" % i
@@ -351,6 +363,14 @@ def render_episode(vod, plan, intro, outro, work, url=None):
                 return f["path"], s - f["origin"], e - f["origin"]
         raise RuntimeError("span %.2f-%.2f in no download" % (s, e))
 
+    # WD2 matched the stings to its raw VOD level (-34 LUFS). A quieter stream (Cyberpunk 11 Nov:
+    # -38.6) made them jump out and failed gate 4 by +2 LU: match them DOWN to THIS body, never louder
+    # than -34, never quieter than -42 (a near-silent body is not a level to copy).
+    global STING_I
+    big0 = max(files, key=lambda x: x[1] - x[0])
+    body0 = [(s, e) for s, e in spans if big0[0] - 0.01 <= s and e <= big0[1] + 0.01]
+    li = lufs(big0[2]["path"], body0[0][0] - big0[2]["origin"], body0[-1][1] - big0[2]["origin"]) if body0 else None
+    STING_I = max(-42.0, min(-34.0, li)) if li is not None else -34.0
     clips = [where(*cold) + ("seg",), (intro, None, None, "sting")]
     clips += [where(s, e) + ("seg",) for s, e in spans] + [(outro, None, None, "sting")]
     expected = (cold[1] - cold[0]) + sum(e - s for s, e in spans) + INTRO_D + OUTRO_D
@@ -388,6 +408,7 @@ def render_episode(vod, plan, intro, outro, work, url=None):
         os.remove(f["path"])
     return out, {"duration": d, "expected": expected, "gates": g, "gpu": gpu_name(),
                  "encoder": "h264_nvenc" if venc() is NVENC else "libx264", "downloads": len(files),
+                 "body_lufs": li, "sting_lufs": STING_I,
                  "timings": {"fetch_s": round(t_fetch, 1), "render_s": round(t_render, 1), "gates_s": round(t_gates, 1),
                              "total_s": round(time.time() - t_all, 1)}}
 
