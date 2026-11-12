@@ -734,9 +734,10 @@ def draft_copy(run, m, episodes):
 def review(run, an, m, mp4):
     wd = os.path.join(run.state, "review_%s" % hashlib.sha1(m["marker"].encode()).hexdigest()[:10])
     os.makedirs(wd, exist_ok=True)
+    psha = hashlib.sha1(open(os.path.join(HERE, "review_prompt.md"), "rb").read()).hexdigest()[:12]
     old = jload(os.path.join(wd, "review.json"))
-    if old and old.get("mp4_size") == os.path.getsize(mp4):
-        return old
+    if old and old.get("mp4_size") == os.path.getsize(mp4) and old.get("prompt_sha") == psha:
+        return old                              # same file, same rubric: no second call
     answers = jload(run.a.answers, {}) if run.a.answers else {}
     sess = (answers.get("reviews") or {}).get(m["marker"])
     if sess:   # lane 4: a Claude session looked at these sheets and gave the verdict
@@ -757,6 +758,7 @@ def review(run, an, m, mp4):
         return {"verdict": "hold", "issues": [{"severity": "blocker", "what": "review crashed rc %d" % r.returncode}]}
     res = jload(os.path.join(wd, "review.json"), {})
     res["mp4_size"] = os.path.getsize(mp4)
+    res["prompt_sha"] = psha
     jdump(res, os.path.join(wd, "review.json"))
     os.remove(os.path.join(wd, "analysis.json"))
     return res
