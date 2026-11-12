@@ -38,10 +38,10 @@ class Vast:
         if not self.key:
             raise VastError("no VAST_API_KEY")
 
-    def _call(self, method, path, body=None, tries=4):
+    def _call(self, method, path, body=None, tries=4, base=API):
         data = json.dumps(body).encode() if body is not None else None
         for k in range(tries):
-            req = urllib.request.Request(API + path, data=data, method=method, headers={
+            req = urllib.request.Request(base + path, data=data, method=method, headers={
                 "Authorization": "Bearer " + self.key, "Content-Type": "application/json", "Accept": "application/json",
                 "User-Agent": "clipbot-polished"})
             try:
@@ -50,6 +50,9 @@ class Vast:
                     return json.loads(txt)
             except urllib.error.HTTPError as e:
                 txt = e.read().decode("utf-8", "replace")[:300]
+                if e.code == 410 and "/api/v1/" in txt and base == API:
+                    # 12 Nov: Vast retired some v0 endpoints ("/api/v0/instances/ is deprecated. Use /api/v1/instances/")
+                    return self._call(method, path, body, tries, base=API.replace("/v0", "/v1"))
                 if e.code in (429, 500, 502, 503) and k < tries - 1:
                     time.sleep(5 * (k + 1))
                     continue
@@ -100,7 +103,13 @@ class Vast:
 
     def instance(self, iid):
         r = self._call("GET", f"/instances/{iid}/?owner=me")
-        return r.get("instances") if isinstance(r.get("instances"), dict) else r
+        for k in ("instances", "instance", "result", "data"):
+            v = r.get(k) if isinstance(r, dict) else None
+            if isinstance(v, dict):
+                return v
+            if isinstance(v, list) and v:
+                return v[0]
+        return r
 
     def destroy(self, iid):
         for k in range(5):
@@ -114,7 +123,13 @@ class Vast:
 
     def mine(self):
         r = self._call("GET", "/instances/?owner=me")
-        return r.get("instances", []) if isinstance(r, dict) else r
+        if isinstance(r, list):
+            return r
+        for k in ("instances", "results", "data"):
+            if isinstance(r.get(k), list):
+                return r[k]
+        print("  instance list shape: keys %s" % sorted(r)[:10])
+        return []
 
     def sweep(self, keep=None):
         """Destroy every instance of ours (label prefix) except `keep`. Returns the ids destroyed."""
