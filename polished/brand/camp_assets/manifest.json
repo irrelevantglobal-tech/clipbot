@@ -1,25 +1,25 @@
 {
- "version": "camp-2026-11-12",
+ "version": "camp-2026-11-13",
  "files": {
   "au_doze.mp4": {
-   "sha256": "4f9bb505b4218771306fcd1eca532213bfdb59664d14cbdd2263e99e53bc5cd9",
-   "bytes": 1927528
+   "sha256": "6cc0273e23a150f74ac21bc612af67ebbcee2d63195a045c0cc94ab74408353f",
+   "bytes": 1146232
   },
   "au_flute.mp4": {
-   "sha256": "d7b43024fd28c28c6f94801c8d975aa343f9c892c3926af714784b6326ac2224",
-   "bytes": 2038813
+   "sha256": "5e567032d67ac37181da84b8c98b57c974fda4e7fb3b047b10db9e8878b05bf6",
+   "bytes": 1209458
   },
   "au_pet.mp4": {
-   "sha256": "2509f1f398db99360f001404a273de4f8b9c8a392d7624ec36dbfe2fe2258eae",
-   "bytes": 1964154
+   "sha256": "f320ef6c576e0ecf9087d6c45f948dc9ccb16365cc1010ed2dbb9043c8027df8",
+   "bytes": 1178648
   },
   "au_read.mp4": {
-   "sha256": "557df6a497c23157b58504b2aec8eb25a6d35b64a6e34d32a73a0697630eff45",
-   "bytes": 1932640
+   "sha256": "c01f955e711b75b37760ae108f3e4df562dcbad46db30ec712a5b7a62ed833af",
+   "bytes": 1144496
   },
   "autumn_wide.mp4": {
-   "sha256": "f3e13da11a7a18357122b97dd33a2166202730229753fdef3630d5bd2d7ff34b",
-   "bytes": 2983100
+   "sha256": "809fd261c40320c922da163dd5f6638afa6a54c54c1b1e955d9d48eb5439d695",
+   "bytes": 1408249
   },
   "camp_outro_base.mp4": {
    "sha256": "ddd7c87fbe1276b89705f3aaf08762c19fb4fe4a63f08e9c4f7e0ff079bd8e1d",
@@ -54,8 +54,8 @@
    "bytes": 3086977
   },
   "gta_conga.mp4": {
-   "sha256": "fb4110a6190c1fbedb2f27f7850ee8c11c7e3467be937acc53d55313c70c3d65",
-   "bytes": 2070026
+   "sha256": "1edc90e66095e627d9a818005ea04fc9b3c9a8da41c7d0468630a31cff76b111",
+   "bytes": 2289587
   },
   "gta_doze.mp4": {
    "sha256": "58d063aa133162bfb7937395c00b69de97bf58ace4a0f486f38d0a55ca461271",
@@ -66,12 +66,12 @@
    "bytes": 2206116
   },
   "gta_gator.mp4": {
-   "sha256": "c4dd57a1ba215cfd7d0b11332e70153044329b0fe9375c60a40207cac880a726",
-   "bytes": 1724025
+   "sha256": "dcd2c197f5645c9e8dbc3a9c1601bbf24ee28cc38011180d00e20cf739e16df9",
+   "bytes": 2042425
   },
   "gta_icecream.mp4": {
-   "sha256": "4496cc8f275eec4a47d6d5ef5752674a2a4b574427f4bc288a09872d732fd687",
-   "bytes": 1822071
+   "sha256": "e5b5abf21916fa1a3e84975155f7c9fc90e3369321991fd4387d54de6f0a8016",
+   "bytes": 2137016
   },
   "gta_roast.mp4": {
    "sha256": "4cd2fa6d422911f41151a50b946ccb4508da61c0dad4e24dcfcc179b44dcb294",
