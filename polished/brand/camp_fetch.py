@@ -3,9 +3,11 @@
     python -m polished.brand.camp_fetch            (the workflow runs this before `modal deploy`)
 
 camp_assets/manifest.json lists every media file (camp footage, music) with its sha256 and size. A file that is
-missing or does not match is downloaded from CAMP_ASSETS_URL (base URL; the file name is appended) and checked
-again; a bad download is deleted, never kept. CAMP_ASSETS_TOKEN, if set, is sent as a Bearer header and never
-printed or put in a URL. With everything present and matching, nothing is fetched (no URL needed).
+missing or does not match is fetched from CAMP_ASSETS_URL and checked again; a bad download is deleted, never kept.
+CAMP_ASSETS_URL is either
+  modal-volume://<volume>   a PRIVATE Modal Volume, read with the Modal credentials the job already has, or
+  https://...               a base URL (file name appended), with CAMP_ASSETS_TOKEN sent as a Bearer header.
+Credentials are never printed or put in a URL. With everything present and matching, nothing is fetched.
 The media is kept out of git history (.gitignore); it rides to Modal inside the deployed image (add_local_dir of
 polished/) and to a Vast box inside the same tarball, so no token ever reaches a rented machine.
 """
@@ -50,19 +52,28 @@ def ensure(assets=ASSETS, base=None, token=None):
         raise SystemExit("camp sting media missing or changed (%d files, e.g. %s) and CAMP_ASSETS_URL is not set"
                          % (len(todo), todo[0]))
     want = manifest(assets)["files"]
+    vol = None
+    if base.startswith("modal-volume://"):
+        import modal
+        vol = modal.Volume.from_name(base[len("modal-volume://"):].strip("/"))
     for f in todo:
         dst = os.path.join(assets, f)
         tmp = dst + ".part"
-        req = urllib.request.Request(base.rstrip("/") + "/" + f, headers={"User-Agent": "ClipBot/1.0"})
-        if token:
-            req.add_header("Authorization", "Bearer " + token)
         try:
-            with urllib.request.urlopen(req, timeout=120) as r, open(tmp, "wb") as out:
-                while True:
-                    b = r.read(1 << 20)
-                    if not b:
-                        break
-                    out.write(b)
+            if vol is not None:
+                with open(tmp, "wb") as out:
+                    for b in vol.read_file(f):
+                        out.write(b)
+            else:
+                req = urllib.request.Request(base.rstrip("/") + "/" + f, headers={"User-Agent": "ClipBot/1.0"})
+                if token:
+                    req.add_header("Authorization", "Bearer " + token)
+                with urllib.request.urlopen(req, timeout=120) as r, open(tmp, "wb") as out:
+                    while True:
+                        b = r.read(1 << 20)
+                        if not b:
+                            break
+                        out.write(b)
         except Exception as e:   # noqa: BLE001 - say which file, never the token
             if os.path.exists(tmp):
                 os.remove(tmp)
