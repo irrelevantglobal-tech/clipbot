@@ -1,5 +1,5 @@
 {
- "version": "camp-2026-11-13",
+ "version": "camp-2026-11-13b",
  "files": {
   "au_doze.mp4": {
    "sha256": "6cc0273e23a150f74ac21bc612af67ebbcee2d63195a045c0cc94ab74408353f",
@@ -18,8 +18,8 @@
    "bytes": 1144496
   },
   "autumn_wide.mp4": {
-   "sha256": "809fd261c40320c922da163dd5f6638afa6a54c54c1b1e955d9d48eb5439d695",
-   "bytes": 1408249
+   "sha256": "f3e13da11a7a18357122b97dd33a2166202730229753fdef3630d5bd2d7ff34b",
+   "bytes": 2983100
   },
   "camp_outro_base.mp4": {
    "sha256": "ddd7c87fbe1276b89705f3aaf08762c19fb4fe4a63f08e9c4f7e0ff079bd8e1d",
