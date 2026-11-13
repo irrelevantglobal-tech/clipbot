@@ -618,7 +618,8 @@ def main():
         run.api_spent0 = run.api_budget()
         run.notes.append("API ledger unreadable (%s): treated as spent" % str(e)[:80])
     try:
-        run.gem_spent0 = ledger.gemini_spent(since=os.environ.get("GTA6_GEMINI_SINCE") or "2026-11-13")             if (os.environ.get("GITHUB_TOKEN") and run.gem_budget() > 0) else 0.0
+        since = os.environ.get("GTA6_GEMINI_SINCE") or "2026-11-13"
+        run.gem_spent0 = ledger.gemini_spent(since=since) if (os.environ.get("GITHUB_TOKEN") and run.gem_budget() > 0) else 0.0
     except Exception as e:   # noqa: BLE001 - same rule: unreadable = spent, so Gemini is off and windows HOLD
         run.gem_spent0 = run.gem_budget()
         run.notes.append("Gemini ledger unreadable (%s): treated as spent" % str(e)[:80])
