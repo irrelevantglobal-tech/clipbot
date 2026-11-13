@@ -21,6 +21,7 @@ on:
       faults: {description: "QA only, ignored when upload=true: comma list (see conductor.FAULT_HELP)", default: ""}
       fresh: {description: "ignore this window's saved state (re-analyse and re-plan; costs GPU + API again)", type: boolean, default: false}
       redo_chunk: {description: "re-analyse only this saved chunk (its start, VOD seconds) and re-plan the window", default: ""}
+      replan: {description: "keep the saved analysis, re-plan + re-render + re-review the window (no GPU analysis)", type: boolean, default: false}
   workflow_call:
     inputs:
       vod: {type: string, required: true}
@@ -37,6 +38,7 @@ on:
       faults: {type: string, default: ""}
       fresh: {type: boolean, default: false}
       redo_chunk: {type: string, default: ""}
+      replan: {type: boolean, default: false}
 permissions:
   contents: read
   actions: read          # the ledger + state artifacts of earlier runs
@@ -107,6 +109,9 @@ jobs:
             echo "restored $(ls state | wc -l) state file(s) from artifact $id"; rm -rf st.zip st_in
           else echo "no earlier state"; fi
       - run: mkdir -p state
+      - name: Re-plan from the saved analysis
+        if: ${{ inputs.replan }}
+        run: rm -rf state/plans.json state/plan_* state/review_* && echo "plans and reviews start again; analysis kept"
       - name: Re-analyse one chunk, re-plan the window
         if: ${{ inputs.redo_chunk != '' }}
         env:

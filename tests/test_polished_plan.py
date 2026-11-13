@@ -274,3 +274,37 @@ class StreamScenes(unittest.TestCase):
         kept_in_scene = sum(max(0, min(e, 1295) - max(s, 1005)) for s, e in p["keep"])
         self.assertEqual(kept_in_scene, 0)
         self.assertIn("scene", {c[2] for c in p["cuts"]})
+
+
+class BrbOverPausedGame(unittest.TestCase):
+    """13 Nov Vast T3: a BE RIGHT BACK card over a paused game (CLIP saw the game: menu 0.1, scene 0.02), picture
+    barely moving, whisper inventing lines over the music, then him coming back and talking."""
+
+    def setUp(self):
+        self.d = tempfile.mkdtemp()
+
+    def tearDown(self):
+        shutil.rmtree(self.d, ignore_errors=True)
+
+    def test_card_stretch_cut_his_return_kept(self):
+        an = synth(3600)
+        segs = [s for s in an["transcript"]["segments"] if not 600 <= s["s"] < 810]
+        for t0 in (650.0, 700.0, 760.0):              # hallucinated fragments over the music
+            segs.append({"s": t0, "e": t0 + 3, "text": "Thank you for watching.",
+                         "words": [{"w": "Thank", "s": t0, "e": t0 + 0.5, "p": 0.9},
+                                   {"w": "you.", "s": t0 + 0.6, "e": t0 + 1.0, "p": 0.9}]})
+        segs.sort(key=lambda s: s["s"])
+        an["transcript"]["segments"] = segs
+        for v in an["visual"]:
+            if 600 <= v["t"] < 830:
+                v["diff"] = 1.3                         # paused game + animated card: just above the static limit
+        an["menu"] = [{"t": float(t), "menu": 0.1, "scene": 0.02} for t in range(3600)]
+        ap = os.path.join(self.d, "an.json")
+        json.dump(an, open(ap, "w"))
+        r = plan(ap, os.path.join(self.d, "w"), "--no-llm", "--start", "0")
+        self.assertEqual(r.returncode, 0, r.stdout[-600:])
+        p = json.load(open(os.path.join(self.d, "w", "plan.json"), encoding="utf-8"))
+        kept_card = sum(max(0, min(e, 805) - max(s, 605)) for s, e in p["keep"])
+        self.assertLess(kept_card, 5, p["keep"][:6])
+        kept_return = sum(max(0, min(e, 829) - max(s, 811)) for s, e in p["keep"])
+        self.assertGreater(kept_return, 15)              # his words when he is back stay in

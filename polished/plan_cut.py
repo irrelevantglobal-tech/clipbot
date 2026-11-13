@@ -72,6 +72,15 @@ MENU_MAX_SPEECH = 0.40   # WD2 T2: a 45 s controls screen cut at 51% speech (his
 # stream's own scenes (CLIP "scene" score: starting soon / be right back / ending / resting) are cut
 # whatever is said over them.
 QUIET_MENU_MIN, QUIET_MENU_SPEECH = 60.0, 0.15
+# 13 Nov (Vast T3): a BE RIGHT BACK card over a PAUSED game ran 3 min in Part 1. CLIP looks at the whole
+# frame and saw the night street (menu 0.07-0.41, scene 0.01-0.03); the card's animation kept the picture
+# just above the static limit (diff 1.0-1.5); the BRB music meant it was never quiet. Rule without CLIP: a
+# stretch where the picture barely moves and he says almost nothing is not content.
+STILL_DIFF, STILL_MIN, STILL_SPEECH, STILL_WIN = 2.0, 60.0, 0.10, 10.0
+# Up to this much speech, a still stretch is an AWAY stretch: everything before his last run of talk (him coming
+# back) is cut. Whisper invents lines over BRB music ("Thank you for watching.", 13 Nov), so the scattered
+# "speech" earlier in the stretch must not keep the card on screen.
+STILL_AWAY_SPEECH, ISLAND_GAP = 0.25, 3.0
 SCENE_TH, SCENE_MIN, SCENE_KEEP = 0.7, 30.0, 1.0   # probe 12 Nov: starting soon 0.90-0.97, gameplay <= 0.14, post-start menus <= 0.66
 BOUND_GAP, BOUND_CLEAR = 3.0, 1.5
 MIN_EP, MAX_EP = 900.0, 1500.0
@@ -215,6 +224,45 @@ def main():
                 g0, g1 = max(g0, x), min(g1, y)
                 if g1 - g0 >= STATIC_GAP_MIN:
                     vcuts.append([g0 + 1.0, g1 - 0.5, "static-gap"])
+    # STILL + SILENT (any overlay card on a paused game, whatever CLIP thinks of it)
+    vt_ = np.array([v["t"] for v in vis], np.float32)
+    vd_ = np.array([v["diff"] for v in vis], np.float32)
+    if len(vd_):
+        rate_ = 1.0 / float(np.median(np.diff(vt_))) if len(vt_) > 1 else 2.0
+        k_ = max(1, int(STILL_WIN * rate_))
+        med = np.array([np.median(vd_[max(0, i - k_ // 2):i + k_ // 2 + 1]) for i in range(len(vd_))])
+        cur = None
+        for i in range(len(med) + 1):
+            on = i < len(med) and med[i] < STILL_DIFF
+            if on and cur is None:
+                cur = [float(vt_[i]), float(vt_[i])]
+            elif on:
+                cur[1] = float(vt_[i])
+            elif cur is not None:
+                x, y = cur
+                cur = None
+                if y - x < STILL_MIN:
+                    continue
+                sf_ = speech_frac(x, y)
+                inner = [w for w in words if x <= w[0] < y]
+                if sf_ <= STILL_SPEECH:
+                    vcuts.append([x + 2.0, y - 2.0, "still-silent"])
+                    continue
+                if sf_ <= STILL_AWAY_SPEECH and inner:
+                    j = len(inner) - 1                       # start of his last run of talk (him coming back)
+                    while j > 0 and inner[j][0] - inner[j - 1][1] < ISLAND_GAP:
+                        j -= 1
+                    back = inner[j][0] - 0.6
+                    if back - x >= STILL_MIN / 2:
+                        vcuts.append([x + 2.0, back, "still-away"])
+                        x = back                             # the rest (his return) falls through to gap cuts
+                if True:   # he talks there: keep his words, cut only the long wordless gaps
+                    inner = [w for w in words if x - 1.0 < w[1] and w[0] < y + 1.0]
+                    pts = [x] + [t for w in inner for t in (w[0], w[1])] + [y]
+                    for g0, g1 in zip(pts[0::2], pts[1::2]):
+                        g0, g1 = max(g0, x), min(g1, y)
+                        if g1 - g0 >= STATIC_GAP_MIN:
+                            vcuts.append([g0 + 1.0, g1 - 0.5, "still-gap"])
     # MENUS (CLIP zero-shot, cloud_episode.menu_map): "a menu is never content" (kit README),
     # even with commentary over it. Short menus (inventory flashes, a quick map check) stay:
     # only a run >= MENU_MIN of smoothed P(menu) > MENU_TH is cut, keeping a 4 s head so the
