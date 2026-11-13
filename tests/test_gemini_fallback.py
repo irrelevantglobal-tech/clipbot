@@ -127,6 +127,33 @@ class FallbackTest(unittest.TestCase):
                 gemini.token()
 
 
+class OutageTest(unittest.TestCase):
+    def boom(self, *a, **k):
+        raise RuntimeError("gta6-review-plan: API 529: overloaded")
+
+    def test_claude_outage_goes_to_gemini_when_budgeted(self):
+        b = llm.Budget(5.0, 0.0, gem_limit=10.0)
+        with mock.patch.object(llm.Budget, "_claude", OutageTest.boom),                 mock.patch.object(gemini, "generate", return_value=('{"ok": 1}', USAGE, "STOP", "m")):
+            text, c = b.call("gta6-review-plan", "p", model="sonnet")
+        self.assertEqual(text, '{"ok": 1}')
+        self.assertIn("529", b.calls[0]["why_fallback"])
+
+    def test_claude_outage_without_gemini_budget_is_unchanged(self):
+        b = llm.Budget(5.0, 0.0)
+        with mock.patch.object(llm.Budget, "_claude", OutageTest.boom), mock.patch.object(gemini, "generate") as g:
+            with self.assertRaises(RuntimeError):
+                b.call("gta6-review-plan", "p", model="sonnet")
+        g.assert_not_called()
+
+    def test_both_down_raises_the_original_claude_error(self):
+        b = llm.Budget(5.0, 0.0, gem_limit=10.0)
+        with mock.patch.object(llm.Budget, "_claude", OutageTest.boom),                 mock.patch.object(gemini, "generate", side_effect=gemini.GeminiDry("HTTP 503")):
+            with self.assertRaises(RuntimeError) as cm:
+                b.call("gta6-review-plan", "p", model="sonnet")
+        self.assertNotIsInstance(cm.exception, llm.Dry)
+        self.assertIn("529", str(cm.exception))
+
+
 class LedgerTest(unittest.TestCase):
     def test_old_names_still_parse_and_gem_is_optional(self):
         self.assertEqual(ledger.ledger_name(1, 1, 0.1, 0.2, 0.3), "gta6-ledger-1-1-api100000-modal200000-vast300000")

@@ -54,6 +54,15 @@ class Budget:
             if self.gem_limit <= 0:
                 raise
             return self._gemini(task, prompt, model, max_tokens, images, temperature, str(ex))
+        except RuntimeError as ex:
+            # Claude unreachable / 429 / 5xx / 529 after its own retries (launch-week outage, QA sweep 13 Nov R6).
+            # With a Gemini budget, try Gemini; if that fails too, the ORIGINAL error goes up exactly as before.
+            if self.gem_limit <= 0:
+                raise
+            try:
+                return self._gemini(task, prompt, model, max_tokens, images, temperature, "Claude error: %s" % str(ex)[:160])
+            except Dry:
+                raise ex
 
     def _gemini(self, task, prompt, model, max_tokens, images, temperature, why):
         """Each model of the role in turn (gemini.models_for): an error or an answer that isn't JSON moves on to
