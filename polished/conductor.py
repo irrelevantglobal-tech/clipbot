@@ -227,6 +227,12 @@ class Run:
             else:
                 self.st.event("awake", "💤 press at stream time %s (%s) ended at %s: %s." % (
                     hm(p["t"]), p.get("by") or "?", hm(p["end"]), p.get("why", "")[:160]), urgent=False)
+        for n in rep.get("notes", []):   # a Resting run kept only because its audio could not be checked: say so once
+            if "audio check failed" in n:
+                self.st.event("note", "Sleep check: a Resting stretch was scanned anyway because its audio could not be "
+                              "checked (%s). Nothing lost, only the saving." % n.split("(", 1)[-1].rstrip(")")[:120],
+                              urgent=False)
+                break
         if sk:
             h = sum(b - a for a, b in sk) / 3600
             spans = ", ".join("%s-%s" % (hm(a), hm(b)) for a, b in sk)
