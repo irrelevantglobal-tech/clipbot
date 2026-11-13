@@ -25,6 +25,9 @@ model = WhisperModel("large-v3", device="cuda", compute_type="float16")
 t0 = time.time()
 segments, _ = model.transcribe(
     wav,
+    # English, always: auto-detect runs per chunk, and a chunk that opens on music or silence came back in
+    # Japanese (Vast run, 13 Nov), so its real words were lost.
+    language="en",
     beam_size=5,
     word_timestamps=True,
     vad_filter=False,
