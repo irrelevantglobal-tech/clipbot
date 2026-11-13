@@ -443,3 +443,48 @@ class PlanRetry(unittest.TestCase):
         calls, _ = self.plan_all()
         self.assertIn("--reuse-llm", calls[0])
         self.assertFalse(os.path.exists(os.path.join(d, "llm_calls.json")))   # the first call is not counted twice
+
+
+class FailoverRows(Base):
+    """QA 13 Nov: the FAILOVER.md rows that had no test (quota hold, laptop refuses while live, Vast render retry)."""
+
+    def test_spent_youtube_quota_holds_the_window_not_a_crash(self):
+        import urllib.error
+        run = C.Run(SimpleNamespace(state=os.path.join(self.d, "s"), out=os.path.join(self.d, "o"), lane="auto",
+                                    vod="1", upload=True, keep=0, series="GTA 6", answers=""))
+        run.st = C.Status("1", 0, 14400, dry=True)
+        run.brand = "OwnerBrand"
+        man = {"episodes": [], "holes": []}
+        quota = urllib.error.HTTPError("https://x", 403, "Forbidden", {}, None)
+        with mock.patch.object(C, "review", return_value={"verdict": "pass"}), \
+                mock.patch.object(common, "channel_gate"), mock.patch.object(episodes, "marker_on_channel", return_value=""), \
+                mock.patch.object(episodes, "upload_private", side_effect=quota), contextlib.redirect_stdout(io.StringIO()):
+            hold = C.process(run, FakeGpu(self.d, bad=99), {}, plans(3), 0.0, man, common, episodes)
+        self.assertIn("YouTube upload quota used up", hold)
+        self.assertEqual(man["episodes"], [])                           # nothing carded past the held one
+
+    def test_laptop_lane_refuses_while_obs_runs(self):
+        from polished import backlog
+        run = C.Run(SimpleNamespace(state=os.path.join(self.d, "s"), out=os.path.join(self.d, "o")))
+        with mock.patch.object(backlog, "obs_live", return_value=True), mock.patch.dict(os.environ, {"POLISHED_ALLOW_WHILE_LIVE": ""}):
+            with self.assertRaisesRegex(C.Hold, "OBS is running"):
+                C.LocalLane(run)
+
+    def test_vast_render_retried_once_on_the_same_box_then_holds(self):
+        import queue as q_
+        lane = C.VastLane.__new__(C.VastLane)
+        lane.run = SimpleNamespace(st=C.Status("1", 0, 100, dry=True), ident={"brand": "B", "login": "l", "retired": []})
+        tries = []
+
+        def boom(*a):
+            tries.append(1)
+            raise RuntimeError("ssh dropped")
+        lane._render_vast = boom
+        sink, stop = q_.Queue(), threading.Event()
+        with contextlib.redirect_stdout(io.StringIO()):
+            lane.render_many("1", [("k1", {}, "t"), ("k2", {}, "t")], sink, stop)
+        got = [sink.get_nowait() for _ in range(sink.qsize())]
+        self.assertEqual(len(tries), 2)                                  # k1 twice, k2 never started
+        self.assertEqual(got[0][1], None)
+        self.assertIn("render failed", got[0][2])
+        self.assertIsNone(got[-1])
