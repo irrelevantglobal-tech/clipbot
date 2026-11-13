@@ -20,11 +20,12 @@ def main(argv):
     if argv[0] == "analyze":
         vod, lo, hi, out = argv[1], float(argv[2]), float(argv[3]), argv[4]
         t0 = time.time()
-        r = stages.analyze_chunk(vod, lo, hi, out + ".work")
+        wd = os.path.splitext(out)[0] + "_work"   # never ".json" in a folder name: the kit rewrites ".json" in paths
+        r = stages.analyze_chunk(vod, lo, hi, wd)
         r["container_s"] = round(time.time() - t0, 1)
         json.dump(r, open(out + ".part", "w"))
         os.replace(out + ".part", out)
-        shutil.rmtree(out + ".work", ignore_errors=True)
+        shutil.rmtree(wd, ignore_errors=True)
     elif argv[0] == "render":
         vod, plan_f, title, game, brand, login, out_dir = argv[1:8]
         os.makedirs(out_dir, exist_ok=True)
