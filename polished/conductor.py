@@ -296,7 +296,16 @@ class ModalLane:
 
     def render_many(self, vod, jobs, sink, stop):
         """jobs: [(key, plan_vod, title)]. Puts (key, local_mp4 | None, report | error) on sink, in order.
-        At most RENDER_PAR renders in flight; once `stop` is set (an episode was held) nothing new starts."""
+        At most RENDER_PAR renders in flight; once `stop` is set (an episode was held) nothing new starts.
+        The end marker (None) is ALWAYS sent, whatever goes wrong in here."""
+        try:
+            self._render_many(vod, jobs, sink, stop)
+        except Exception as e:   # noqa: BLE001
+            sink.put(("?", None, "render loop failed: %s" % str(e)[:200]))
+        finally:
+            sink.put(None)
+
+    def _render_many(self, vod, jobs, sink, stop):
         b = self.run.ident
         with cf.ThreadPoolExecutor(RENDER_PAR) as ex:
             futs = []
@@ -324,9 +333,13 @@ class ModalLane:
                     continue
                 dst = os.path.join(self.run.a.out, "%s.mp4" % k)
                 tmp = dst + ".part"
-                with open(tmp, "wb") as fh:
-                    for blk in self.vol.read_file("out/%s.mp4" % k):
-                        fh.write(blk)
+                try:   # QA R11: a read error here used to leave the job waiting 4 h for an end marker never sent
+                    with open(tmp, "wb") as fh:
+                        for blk in self.vol.read_file("out/%s.mp4" % k):
+                            fh.write(blk)
+                except Exception as e:   # noqa: BLE001
+                    sink.put((k, None, "could not copy the render out of Modal: %s" % str(e)[:200]))
+                    continue
                 if os.path.getsize(tmp) != rep["size"]:
                     sink.put((k, None, "download size %d != %d" % (os.path.getsize(tmp), rep["size"])))
                     continue
@@ -340,7 +353,6 @@ class ModalLane:
                         pass
                 sink.put((k, dst, rep))
                 top_up()
-        sink.put(None)
 
     def _render_one(self, vod, p, t, b, k):
         for attempt in range(RENDER_TRIES):
@@ -802,7 +814,13 @@ def process(run, gpu, an, plans, lo, man, common, episodes):
                 try:
                     vid = episodes.upload_private(mp4, title, desc, episodes.tags_for(a.series))
                 except Exception as e:   # noqa: BLE001
-                    if "quota" in str(e).lower() or "403" in str(e):
+                    why = str(e)
+                    try:   # QA R7: urllib's message is just "HTTP Error 400"; the reason is in the body
+                        why += " " + e.read().decode("utf-8", "replace")[:400]
+                    except Exception:   # noqa: BLE001
+                        pass
+                    if (getattr(e, "code", None) in (400, 403) or "quota" in why.lower()
+                            or "uploadlimitexceeded" in why.lower()):
                         # the daily YouTube quota (shared by every lane) is spent: HOLD, don't die. Dying makes the
                         # worker retry at once and burn its 3 tries before the 08:00 UK reset, then skip the window.
                         hold = (f"episode {m['i']} (stream time {hm(m['start'])}): YouTube upload quota used up "

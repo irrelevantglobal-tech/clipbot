@@ -488,3 +488,25 @@ class FailoverRows(Base):
         self.assertEqual(got[0][1], None)
         self.assertIn("render failed", got[0][2])
         self.assertIsNone(got[-1])
+
+
+class ModalCopyFailure(unittest.TestCase):
+    """QA R11: a Modal Volume read error used to leave the job waiting 4 h for an end marker."""
+
+    def test_read_error_becomes_a_failed_episode_and_the_loop_ends(self):
+        import queue as q_
+        lane = C.ModalLane.__new__(C.ModalLane)
+        d = tempfile.mkdtemp()
+        lane.run = SimpleNamespace(ident={"brand": "B", "login": "l", "retired": []}, a=SimpleNamespace(out=d, series="GTA 6"),
+                                   cost={"modal": 0.0}, st=C.Status("1", 0, 100, dry=True))
+        lane._render_one = lambda *a: {"size": 10, "gpu": "L4", "container_s": 1}
+        lane.vol = SimpleNamespace(read_file=lambda *a: (_ for _ in ()).throw(OSError("volume gone")),
+                                   remove_file=lambda *a: None)
+        sink, stop = q_.Queue(), threading.Event()
+        lane.render_many("1", [("k1", {}, "t")], sink, stop)
+        items = []
+        while not sink.empty():
+            items.append(sink.get())
+        self.assertEqual(items[-1], None)
+        self.assertIsNone(items[0][1])
+        self.assertIn("could not copy", items[0][2])
