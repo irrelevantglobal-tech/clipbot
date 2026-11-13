@@ -8,6 +8,7 @@
   artifact, `gta6-ledger-<run>-<attempt>-api<micro$>-modal<micro$>-vast<micro$>`, so the sum over all
   runs needs one listing and no downloads. The owner's local api-lane ledger cannot see these calls;
   the cloud budget (GTA6_API_BUDGET, set from the $4.98 reserve) is enforced here instead.
+  The Gemini fallback (13 Nov) adds `-gem<micro$>` only when it spent something (budget GTA6_GEMINI_BUDGET).
 """
 import datetime as dt
 import json
@@ -19,7 +20,7 @@ RATES = {   # modal billing rates, 2026-11-12, $ per second / per GiB
     "gpu": {"L4": 0.80 / 3600, "A10": 1.10 / 3600, "A10G": 1.10 / 3600, "T4": 0.59 / 3600},
     "cpu_core": 0.0473 / 3600, "mem_gib": 0.008 / 3600, "egress_gib": 0.04,
 }
-NAME_RX = re.compile(r"^gta6-ledger-(\d+)-(\d+)-api(\d+)-modal(\d+)-vast(\d+)$")
+NAME_RX = re.compile(r"^gta6-ledger-(\d+)-(\d+)-api(\d+)-modal(\d+)-vast(\d+)(?:-gem(\d+))?$")   # -gem: 13 Nov, optional
 
 
 def month_start(now=None):
@@ -69,7 +70,7 @@ def cloud_runs(repo=None, since=None):
             if since and at < since:
                 continue
             out.append({"run": int(m[1]), "attempt": int(m[2]), "api": int(m[3]) / 1e6,
-                        "modal": int(m[4]) / 1e6, "vast": int(m[5]) / 1e6, "at": at})
+                        "modal": int(m[4]) / 1e6, "vast": int(m[5]) / 1e6, "gemini": int(m[6] or 0) / 1e6, "at": at})
         if len(arts) < 100:
             return out
         page += 1
@@ -79,6 +80,12 @@ def api_spent(since):
     return sum(r["api"] for r in cloud_runs(since=since))
 
 
-def ledger_name(run, attempt, api, modal, vast):
-    return "gta6-ledger-%d-%d-api%d-modal%d-vast%d" % (int(run), int(attempt), round(api * 1e6),
-                                                      round(modal * 1e6), round(vast * 1e6))
+def gemini_spent(since):
+    """The Gemini fallback's own spend (Google trial credit), never mixed with the Claude money."""
+    return sum(r["gemini"] for r in cloud_runs(since=since))
+
+
+def ledger_name(run, attempt, api, modal, vast, gemini=0.0):
+    n = "gta6-ledger-%d-%d-api%d-modal%d-vast%d" % (int(run), int(attempt), round(api * 1e6),
+                                                   round(modal * 1e6), round(vast * 1e6))
+    return n + ("-gem%d" % round(gemini * 1e6) if gemini > 0 else "")

@@ -86,6 +86,8 @@ def main():
     ap.add_argument("--brand", default="")
     ap.add_argument("--budget-limit", type=float, default=0.0)
     ap.add_argument("--budget-spent", type=float, default=0.0)
+    ap.add_argument("--gem-limit", type=float, default=0.0)    # Gemini fallback budget (0 = off: HOLD as before)
+    ap.add_argument("--gem-spent", type=float, default=0.0)
     ap.add_argument("--temperature", type=float, default=0.0)   # 13 Nov: same cut passed at 22:22, failed at 03:40
     a = ap.parse_args()
     plan = json.load(open(os.path.join(a.work, "plan.json"), encoding="utf-8"))
@@ -136,7 +138,7 @@ def main():
     pf = os.path.join(a.work, "review_prompt.txt")
     open(pf, "w", encoding="utf-8").write(prompt)
     of = os.path.join(a.work, "review_llm.json")
-    bud = llm.Budget(a.budget_limit, a.budget_spent)
+    bud = llm.Budget(a.budget_limit, a.budget_spent, a.gem_limit, a.gem_spent)
     try:   # Haiku needs 4000 output tokens: it reasons first, and 1500 cut its answer off (10-30)
         raw, c_ = bud.call("gta6-review-episode", prompt, model=a.model, max_tokens=4000, images=imgs,
                            temperature=a.temperature)
@@ -155,7 +157,7 @@ def main():
         json.dump({"why": "review answer unusable"}, open(os.path.join(a.work, "review_hold.json"), "w"))
         print("HOLD: review answer unusable")
         sys.exit(3)
-    res["lane"] = "cloud %s $%.4f" % (a.model, c_)
+    res["lane"] = "cloud %s $%.4f" % (bud.last_lane or a.model, c_)
     res["images"] = [os.path.basename(i) for i in imgs]
     json.dump(res, open(os.path.join(a.work, "review.json"), "w", encoding="utf-8"), indent=1, ensure_ascii=False)
     print(json.dumps(res, indent=1, ensure_ascii=False))

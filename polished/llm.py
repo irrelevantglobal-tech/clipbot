@@ -1,4 +1,6 @@
 """ONE capped Claude call, from GitHub Actions (or any machine), counted against a cloud budget.
+(Fallback, 13 Nov: when Claude is Dry and GTA6_GEMINI_BUDGET is set, the same prompt goes to Gemini on
+Vertex AI, counted against its own budget; see polished/gemini.py. Unset = exactly the old behaviour.)
 
 Same models, prices and worst-case pre-check as the owner's local api-lane.js, so a cloud call
 never costs more than the same call would locally. The local ledger cannot see cloud calls, so the
@@ -35,14 +37,48 @@ def cost(m, u):
 
 
 class Budget:
-    def __init__(self, limit, spent=0.0):
+    def __init__(self, limit, spent=0.0, gem_limit=0.0, gem_spent=0.0):
         self.limit, self.spent, self.calls = float(limit), float(spent), []
+        self.gem_limit, self.gem_spent = float(gem_limit or 0.0), float(gem_spent or 0.0)
+        self.last_lane = None
 
     def left(self):
         return self.limit - self.spent
 
     def call(self, task, prompt, model="sonnet", max_tokens=5000, effort="low", images=(), temperature=None):
-        """-> (text, cost). Raises Dry before spending anything it might not be able to pay for."""
+        """-> (text, cost). Claude first, exactly as before; only if that is Dry and a Gemini budget is set,
+        the same prompt goes to Gemini (polished/gemini.py). Raises Dry when neither can pay: HOLD."""
+        try:
+            return self._claude(task, prompt, model, max_tokens, effort, images, temperature)
+        except Dry as ex:
+            if self.gem_limit <= 0:
+                raise
+            return self._gemini(task, prompt, model, max_tokens, images, temperature, str(ex))
+
+    def _gemini(self, task, prompt, model, max_tokens, images, temperature, why):
+        from polished import gemini
+        mid = gemini.model_for(model)
+        if gemini.price_of(mid) is None:
+            raise Dry(f"{why}; Gemini fallback refused: no price known for {mid}")
+        worst = gemini.worst_case(mid, prompt, len(images), max_tokens)
+        gleft = self.gem_limit - self.gem_spent
+        if worst > gleft:
+            raise Dry(f"{why}; Gemini fallback: worst case ${worst:.3f} > ${gleft:.3f} left of the ${self.gem_limit:.2f} "
+                      "Gemini budget")
+        try:
+            text, usage, finish, ver = gemini.generate(task, prompt, mid, max_tokens, images=images, temperature=temperature)
+        except gemini.GeminiDry as e:
+            raise Dry(f"{why}; Gemini fallback failed: {e}")
+        c = gemini.cost(mid, usage)
+        self.gem_spent += c
+        self.last_lane = "gemini " + mid
+        self.calls.append({"at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "task": task, "model": ver,
+                           "lane": "gemini", "stop": finish, "in": usage.get("promptTokenCount"),
+                           "out": (usage.get("candidatesTokenCount") or 0) + (usage.get("thoughtsTokenCount") or 0),
+                           "cost": round(c, 6), "why_fallback": why[:200]})
+        return text, c
+
+    def _claude(self, task, prompt, model, max_tokens, effort, images, temperature):
         m = MODELS[model]
         worst = ((len(prompt) + 2000 * len(images)) * m.get("longIn", m["in"]) + max_tokens * m.get("longOut", m["out"])) / 1e6
         if worst > self.left():
@@ -64,6 +100,7 @@ class Budget:
         msg = self._post(body, hdr, task)
         c = cost(m, msg.get("usage", {}))
         self.spent += c
+        self.last_lane = model
         self.calls.append({"at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "task": task, "model": m["id"],
                            "stop": msg.get("stop_reason"), "in": msg.get("usage", {}).get("input_tokens"),
                            "out": msg.get("usage", {}).get("output_tokens"), "cost": round(c, 6)})

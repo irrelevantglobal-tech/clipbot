@@ -49,6 +49,10 @@ jobs:
   # same Discord cards; the worker cannot tell which lane answered.
   polished:
     if: ${{ vars.EP_POLISHED == '1' }}
+    permissions:
+      contents: read
+      actions: read
+      id-token: write    # only this job: the Gemini fallback signs in to Google with GitHub OIDC (no stored key)
     uses: ./.github/workflows/polished.yml
     with:
       vod: ${{ inputs.vod }}

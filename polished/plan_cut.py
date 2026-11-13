@@ -139,6 +139,8 @@ def main():
     ap.add_argument("--model", default="sonnet")
     ap.add_argument("--budget-limit", type=float, default=0.0)
     ap.add_argument("--budget-spent", type=float, default=0.0)
+    ap.add_argument("--gem-limit", type=float, default=0.0)    # Gemini fallback budget (0 = off: HOLD as before)
+    ap.add_argument("--gem-spent", type=float, default=0.0)
     a = ap.parse_args()
     a.part = "{PART}"
     SUFFIX = " | " + a.brand if a.brand else ""
@@ -507,7 +509,7 @@ def main():
         pf = os.path.join(a.work, "plan_prompt.txt")
         open(pf, "w", encoding="utf-8").write(prompt)
         of = os.path.join(a.work, "plan_llm.json")
-        bud = llm.Budget(a.budget_limit, a.budget_spent)
+        bud = llm.Budget(a.budget_limit, a.budget_spent, a.gem_limit, a.gem_spent)
         try:
             raw, c_ = bud.call("gta6-review-plan", prompt, model=a.model, max_tokens=5000)
         except llm.Dry as ex:
@@ -516,7 +518,7 @@ def main():
             sys.exit(3)
         json.dump(bud.calls, open(os.path.join(a.work, "llm_calls.json"), "w", encoding="utf-8"))
         open(of, "w", encoding="utf-8").write(raw)
-        cost_line = "cloud %s $%.4f" % (a.model, c_)
+        cost_line = "cloud %s $%.4f" % (bud.last_lane or a.model, c_)
         print(cost_line)
         m = re.search(r"\{.*\}", raw, re.S)
         try:

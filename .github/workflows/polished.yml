@@ -42,6 +42,7 @@ on:
 permissions:
   contents: read
   actions: read          # the ledger + state artifacts of earlier runs
+  id-token: write        # Gemini fallback: GitHub OIDC -> Google (Workload Identity Federation), no stored key
 jobs:
   polish:
     runs-on: ubuntu-latest
@@ -75,6 +76,12 @@ jobs:
       GTA6_API_BUDGET: ${{ vars.GTA6_API_BUDGET }}
       GTA6_API_SINCE: ${{ vars.GTA6_API_SINCE }}
       GTA6_MODAL_HANDOFF: ${{ vars.GTA6_MODAL_HANDOFF }}
+      # Gemini on Vertex AI = FALLBACK when the Claude budget is dry (polished/gemini.py). Unset budget = off (HOLD).
+      GTA6_GEMINI_BUDGET: ${{ vars.GTA6_GEMINI_BUDGET }}
+      GTA6_GEMINI_SINCE: ${{ vars.GTA6_GEMINI_SINCE }}
+      GTA6_GEMINI_PLAN_MODEL: ${{ vars.GTA6_GEMINI_PLAN_MODEL }}
+      GTA6_GEMINI_REVIEW_MODEL: ${{ vars.GTA6_GEMINI_REVIEW_MODEL }}
+      GTA6_GCP_PROJECT: ${{ vars.GTA6_GCP_PROJECT }}
       GITHUB_TOKEN: ${{ github.token }}
       POLISHED_FAULTS: ${{ inputs.faults }}
       POLISHED_DRY: ${{ inputs.upload && '0' || '1' }}
@@ -98,7 +105,14 @@ jobs:
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL || true
           df -h / | tail -1
       - run: for i in 1 2 3 4; do sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg fonts-dejavu-core && break; echo "apt failed ($i), retrying in 30 s"; sleep 30; done; command -v ffmpeg > /dev/null
-      - run: pip install -q -r requirements.txt modal numpy pillow
+      - run: pip install -q -r requirements.txt modal numpy pillow google-auth
+      - name: Google Cloud sign-in for the Gemini fallback (keyless; a failure here only means Claude-dry windows HOLD)
+        if: vars.GTA6_GEMINI_BUDGET != '' && vars.GTA6_GCP_WIF_PROVIDER != ''
+        continue-on-error: true
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ vars.GTA6_GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GTA6_GCP_SA }}
       - name: Restore this window's state from an earlier attempt (no second analysis, no second plan call)
         if: ${{ !inputs.fresh }}
         run: |

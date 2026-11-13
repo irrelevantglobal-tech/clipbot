@@ -92,6 +92,8 @@ class Status:
             money.append("Vast $%.2f left of $10" % m["vast"])
         if "api" in m:
             money.append("API reserve $%.2f left" % m["api"])
+        if "gemini" in m:
+            money.append("Gemini fallback $%.2f left" % m["gemini"])
         if money:
             lines.append("**Money:** " + "  ·  ".join(money))
         lines.append("*Updated %s. If this says RUNNING and stops updating for %d min, the watchdog posts 🧊 stuck.*"

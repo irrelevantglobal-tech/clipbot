@@ -56,7 +56,8 @@ FAULT_HELP = {
     "vast_zero": "Vast balance read as $0: Vast refuses cleanly",
     "vast_start_fail": "every Vast rent attempt fails: the next offer, then HOLD; nothing left running",
     "vast_leftover": "the Vast instance is NOT destroyed at the end (the next run's sweep must destroy it)",
-    "api_dry": "cloud API budget 0: planning HOLDS (lane 4), never a rough cut",
+    "api_dry": "cloud API (Claude) budget 0: the Gemini fallback plans/reviews if GTA6_GEMINI_BUDGET is set, else HOLD",
+    "gemini_dry": "Gemini fallback budget 0: with api_dry, planning HOLDS (lane 4), never a rough cut",
     "all_lanes_out": "modal_at_cap + vast_zero: HOLD + phone ping",
     "kill_render": "the first Modal render is cancelled mid-way: the window dies, nothing partial is kept",
     "client_dies": "this Actions client exits hard while renders run (exit 137)",
@@ -102,9 +103,11 @@ class Run:
         self.state = a.state
         os.makedirs(self.state, exist_ok=True)
         os.makedirs(a.out, exist_ok=True)
-        self.cost = {"modal": 0.0, "vast": 0.0, "api": 0.0}
+        self.cost = {"modal": 0.0, "vast": 0.0, "api": 0.0, "gemini": 0.0}
         self.modal_spent0 = None
         self.api_spent0 = 0.0
+        self.gem_spent0 = 0.0
+        self.gem_told = False
         self.notes = []
         self.lane = None
         self.money = {}
@@ -115,8 +118,25 @@ class Run:
     def api_budget(self):
         return 0.0 if fault("api_dry") else float(os.environ.get("GTA6_API_BUDGET") or 0.0)
 
+    def gem_budget(self):
+        """Gemini (Vertex AI, Google trial credit) = fallback only, used when the Claude call is Dry. 0 = off."""
+        return 0.0 if fault("gemini_dry") else float(os.environ.get("GTA6_GEMINI_BUDGET") or 0.0)
+
     def api_left_args(self):
-        return ["--budget-limit", "%.4f" % self.api_budget(), "--budget-spent", "%.4f" % (self.api_spent0 + self.cost["api"])]
+        return ["--budget-limit", "%.4f" % self.api_budget(), "--budget-spent", "%.4f" % (self.api_spent0 + self.cost["api"]),
+                "--gem-limit", "%.4f" % self.gem_budget(), "--gem-spent", "%.4f" % (self.gem_spent0 + self.cost["gemini"])]
+
+    def add_llm_cost(self, calls):
+        gem = [c for c in calls if c.get("lane") == "gemini"]
+        self.cost["api"] += sum(c.get("cost", 0) for c in calls if c.get("lane") != "gemini")
+        self.cost["gemini"] += sum(c.get("cost", 0) for c in gem)
+        if gem and not self.gem_told:
+            self.gem_told = True
+            self.notes.append("Gemini fallback used (Claude dry): %s" % gem[0].get("why_fallback", "")[:160])
+            self.st.event("lane", "Claude API money is out, so **Gemini** (Google trial credit) is planning/reviewing "
+                          "now. Same checks and review gate; Gemini left ~$%.2f." % max(
+                              0.0, self.gem_budget() - self.gem_spent0 - self.cost["gemini"]), urgent=False)
+        self.money["gemini"] = max(0.0, self.gem_budget() - self.gem_spent0 - self.cost["gemini"])
 
     def pick_lane(self, stream_h):
         want = self.a.lane
@@ -238,7 +258,7 @@ class Run:
                 print(r.stdout[-3000:], r.stderr[-2000:], flush=True)
                 rc = r.returncode
                 calls = jload(os.path.join(ep_dir, "llm_calls.json"), []) or []
-                self.cost["api"] += sum(c.get("cost", 0) for c in calls)
+                self.add_llm_cost(calls)
                 idx[key] = {"rc": rc}
                 jdump(idx, os.path.join(self.state, "plans.json"))
             if rc == 0:
@@ -597,6 +617,11 @@ def main():
     except Exception as e:   # noqa: BLE001 - unreadable ledger = assume the worst: the budget is spent
         run.api_spent0 = run.api_budget()
         run.notes.append("API ledger unreadable (%s): treated as spent" % str(e)[:80])
+    try:
+        run.gem_spent0 = ledger.gemini_spent(since=os.environ.get("GTA6_GEMINI_SINCE") or "2026-11-13")             if (os.environ.get("GITHUB_TOKEN") and run.gem_budget() > 0) else 0.0
+    except Exception as e:   # noqa: BLE001 - same rule: unreadable = spent, so Gemini is off and windows HOLD
+        run.gem_spent0 = run.gem_budget()
+        run.notes.append("Gemini ledger unreadable (%s): treated as spent" % str(e)[:80])
     log(f"VOD {a.vod} window {lo:.0f}-{hi:.0f}{' FINAL' if a.final else ''}; cloud API ${run.api_spent0:.3f} of ${run.api_budget():.2f}")
     if hi - lo < 60 and not a.final:
         man["next_from"] = lo
@@ -610,6 +635,8 @@ def main():
             raise RuntimeError(f"VOD {a.vod} has no 1920x1080 rendition (fault no_1080); refusing (owner: everything 1080p)")
         fetch.rendition(a.vod)
         run.money["api"] = max(0.0, run.api_budget() - run.api_spent0)
+        if run.gem_budget() > 0:
+            run.money["gemini"] = max(0.0, run.gem_budget() - run.gem_spent0)
         run.st.board(force=True, stage="choosing a lane", money=run.money)
         run.lane = "local" if a.lane == "local" else run.pick_lane((hi - lo) / 3600)
         run.st.board(force=True, lane={"modal": "Modal (cloud GPU)", "vast": "Vast.ai (rented GPU)",
@@ -693,7 +720,7 @@ def finish(run, man, t_run):
     man["notes"] = run.notes
     jdump(man, os.path.join(run.a.out, "episodes.json"))
     name = ledger.ledger_name(os.environ.get("GITHUB_RUN_ID", 0), os.environ.get("GITHUB_RUN_ATTEMPT", 0),
-                              run.cost["api"], run.cost["modal"], run.cost["vast"])
+                              run.cost["api"], run.cost["modal"], run.cost["vast"], run.cost["gemini"])
     open(os.path.join(run.a.out, "ledger_name.txt"), "w").write(name)
     log("cost this run:", man["cost"], "->", name)
 
@@ -881,7 +908,7 @@ def review(run, an, m, mp4):
                            cwd=ROOT, capture_output=True, text=True, encoding="utf-8")
         print(r.stdout[-2500:], r.stderr[-1500:], flush=True)
         calls = jload(os.path.join(wd, "review_calls.json"), []) or []
-        run.cost["api"] += sum(c.get("cost", 0) for c in calls)
+        run.add_llm_cost(calls)
         if r.returncode == 3:
             h = jload(os.path.join(wd, "review_hold.json"), {})
             return {"verdict": "hold", "issues": [{"severity": "blocker", "what": h.get("why", "review held")}]}
