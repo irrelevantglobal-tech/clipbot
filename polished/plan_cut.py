@@ -90,6 +90,8 @@ SHORT_MIN = 5 * 60.0                     # reported: the last episode before a b
 TAIL_MERGE = 6 * 60.0                    # closing: a leftover under this joins the last episode
 
 
+COLD_REACH = 2.5   # s: how far a cold-open edge may move to reach a sentence edge
+
 def pct(x):
     return np.argsort(np.argsort(x)).astype(np.float32) / max(len(x) - 1, 1)
 
@@ -573,6 +575,26 @@ def main():
         if not ws:
             return None
         i0 = words.index(ws[0]); i1 = words.index(ws[-1])
+        # whole sentences: a word that flows straight into the next (no . ! ? and under 0.3 s apart) is never an edge.
+        # Reach out to the sentence edge (up to COLD_REACH s); failing that, pull back to the nearest clean edge.
+        def flows(a, b):
+            return not str(words[a][2]).strip().endswith((".", "!", "?")) and words[b][0] - words[a][1] < 0.3
+        j = i0
+        while j > 0 and flows(j - 1, j) and words[i0][0] - words[j - 1][0] <= COLD_REACH:
+            j -= 1
+        if j > 0 and flows(j - 1, j):
+            j = i0
+            while j < i1 and flows(j - 1, j):
+                j += 1
+        k = i1
+        while k + 1 < len(words) and flows(k, k + 1) and words[k + 1][1] - words[i1][1] <= COLD_REACH:
+            k += 1
+        if k + 1 < len(words) and flows(k, k + 1):
+            k = i1
+            while k > j and flows(k, k + 1):
+                k -= 1
+        i0, i1 = j, k
+        ws = words[i0:i1 + 1]
         prev_e = words[i0 - 1][1] if i0 > 0 else ws[0][0] - 1
         next_s = words[i1 + 1][0] if i1 + 1 < len(words) else ws[-1][1] + 1
         s = max(ws[0][0] - 0.6, (prev_e + ws[0][0]) / 2)

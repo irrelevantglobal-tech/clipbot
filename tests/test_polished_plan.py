@@ -308,3 +308,46 @@ class BrbOverPausedGame(unittest.TestCase):
         self.assertLess(kept_card, 5, p["keep"][:6])
         kept_return = sum(max(0, min(e, 829) - max(s, 811)) for s, e in p["keep"])
         self.assertGreater(kept_return, 15)              # his words when he is back stay in
+
+
+def synth_sentences(dur, n=6):
+    """Run-on speech: n words back to back (no gap, no punctuation) then 'word.' and a 0.8 s pause.
+    Only a sentence end or a pause is a legal cold-open edge here."""
+    an = synth(dur)
+    words, t, k, last_breath = [], 2.0, 0, 0.0
+    while t < dur - 1:
+        k += 1
+        end = k % n == 0
+        words.append({"w": " word." if end else " word", "s": round(t, 2), "e": round(t + 0.4, 2), "p": 0.9})
+        t += 0.4 + (0.8 if end else 0.0)
+        if end and t - last_breath >= 300:              # a 4 s breath every 5 min: the legal episode ends
+            t += 4.0
+            last_breath = t
+    an["transcript"] = {"segments": [{"s": w["s"], "e": w["e"], "text": w["w"], "words": [w]} for w in words]}
+    return an, words
+
+
+class ColdOpenSentences(unittest.TestCase):
+    """Run 43354198510 (13 Nov) was held by the review: the cold open ended on the 'The' of a repeated
+    "The cake's alive." and began 2 ms into "I'm". snap_cold now never puts an edge inside a sentence."""
+
+    def setUp(self):
+        self.d = tempfile.mkdtemp()
+
+    def tearDown(self):
+        shutil.rmtree(self.d, ignore_errors=True)
+
+    def test_cold_open_is_whole_sentences(self):
+        an, words = synth_sentences(3600)
+        ap = os.path.join(self.d, "an.json")
+        json.dump(an, open(ap, "w"))
+        r = plan(ap, os.path.join(self.d, "ep"), "--no-llm", "--start", "0")
+        self.assertEqual(r.returncode, 0, r.stdout[-600:] + r.stderr[-600:])
+        s, e = json.load(open(os.path.join(self.d, "ep", "plan.json"), encoding="utf-8"))["cold"]
+        inside = [i for i, w in enumerate(words) if s <= w["s"] and w["e"] <= e]
+        self.assertTrue(inside)
+        first, last = inside[0], inside[-1]
+        self.assertFalse(any(w["s"] < s < w["e"] or w["s"] < e < w["e"] for w in words), (s, e))   # no word sliced
+        self.assertTrue(first == 0 or words[first - 1]["w"].endswith("."), (s, e))               # opens a sentence
+        self.assertTrue(words[last]["w"].endswith("."), (s, e))                                  # ends one
+        self.assertTrue(5.0 <= e - s <= 15.5)
