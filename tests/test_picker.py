@@ -271,3 +271,13 @@ class Titles(unittest.TestCase):
                                 {"i": 1, "score": 6, "title": "I Barely Escaped The Game Swallowing Me"}]}, cs)
         self.assertEqual(v[0]["title"], "")
         self.assertEqual(v[1]["title"], "I Barely Escaped The Game Swallowing Me")
+
+    def test_title_hyphens_made_plain(self):
+        # the ranker wrote a U+2011 non-breaking hyphen ("Mini-Map", 13 Nov test); the hook font may not have it
+        self.assertEqual(f.clean_title(' "I Search Without A Mini‑Map — Again"\n'), "I Search Without A Mini-Map - Again")
+        self.assertEqual(f.clean_title(None), "")
+
+    def test_static_cutoff_catches_the_wardrobe_menu(self):
+        # the same 12 Nov menu measured 0.91 and 0.84 depending on the cut; his approvals are <= 0.66 bar one 0.92
+        self.assertLessEqual(f.STILL_MAX, 0.84)
+        self.assertGreater(f.STILL_MAX, 0.66)

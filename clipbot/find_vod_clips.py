@@ -262,6 +262,13 @@ def aligned(expected, got, need=0.3):
     return r >= need, round(r, 2)
 
 
+def clean_title(t):
+    """One line, no wrapping quotes, plain ASCII hyphens: the model writes U+2011 non-breaking hyphens ("Mini-Map",
+    13 Nov test), which the burned-in hook font may not have."""
+    t = re.sub(r"[\u2010-\u2015\u2212]", "-", str(t or ""))
+    return re.sub(r"\s+", " ", t).strip().strip('"')
+
+
 def rerank(cands, vod_title, n_pick=N_PICK):
     """Ask the worker's AI to pick n_pick and title them. Validated hard; any problem ->
     None and the heuristic order stands."""
@@ -276,7 +283,7 @@ def rerank(cands, vod_title, n_pick=N_PICK):
     for p in r.get("picks", []):
         i = p.get("i")
         if isinstance(i, int) and 0 <= i < len(cands) and i not in seen:
-            t = re.sub(r"\s+", " ", str(p.get("title", ""))).strip().strip('"')
+            t = clean_title(p.get("title", ""))
             if not (3 <= len(t) <= 70):
                 t = ""
             seen.add(i)
@@ -418,7 +425,9 @@ def considered(cands, base):
     return out
 
 
-STILL_MAX = 0.85   # share of frozen 0.5 s steps above which a cut is a static screen (the 12 Nov wardrobe menu: 0.91)
+# share of frozen 0.5 s steps at or above which a cut is a static screen. The 12 Nov wardrobe menu measured 0.91 and,
+# cut slightly differently, 0.84 (13 Nov test). Of 16 clips he approved, 15 are <= 0.66 and one 0.92; none sit in 0.67-0.91.
+STILL_MAX = 0.80
 
 
 def stillness(path):
