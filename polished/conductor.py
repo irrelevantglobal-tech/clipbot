@@ -788,7 +788,16 @@ def process(run, gpu, an, plans, lo, man, common, episodes):
                          detail="episode %d passed the gates and the review" % m["i"])
             if a.upload:
                 title, desc = draft_copy(run, m, episodes)
-                vid = episodes.upload_private(mp4, title, desc, episodes.tags_for(a.series))
+                try:
+                    vid = episodes.upload_private(mp4, title, desc, episodes.tags_for(a.series))
+                except Exception as e:   # noqa: BLE001
+                    if "quota" in str(e).lower() or "403" in str(e):
+                        # the daily YouTube quota (shared by every lane) is spent: HOLD, don't die. Dying makes the
+                        # worker retry at once and burn its 3 tries before the 08:00 UK reset, then skip the window.
+                        hold = (f"episode {m['i']} (stream time {hm(m['start'])}): YouTube upload quota used up "
+                                "(resets 08:00 UK); the window is kept and retried")
+                        break
+                    raise
                 m["video"] = vid
                 log(f"  ep {m['i']}: uploaded PRIVATE https://youtu.be/{vid}")
             if kept_n < a.keep and not a.upload:
