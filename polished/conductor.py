@@ -212,8 +212,12 @@ class Run:
             ep_dir = os.path.join(self.state, "plan_%s" % key.replace(".", "_"))
             os.makedirs(ep_dir, exist_ok=True)
             done = idx.get(key)
+            # Reuse only a finished answer: a plan (rc 0) or a tail (rc 2) whose file is there. QA 13 Nov: a crash
+            # (rc 1, e.g. the API overloaded for a minute) used to be replayed from plans.json on every retry, so
+            # the window died 3 times without planning again and the worker skipped it.
             if done and key not in (answers.get("plans") or {}) and (
-                    done["rc"] != 0 or os.path.exists(os.path.join(ep_dir, "plan.json"))) and done["rc"] != 3:
+                    (done["rc"] == 0 and os.path.exists(os.path.join(ep_dir, "plan.json"))) or
+                    (done["rc"] == 2 and os.path.exists(os.path.join(ep_dir, "tail.json")))):
                 rc = done["rc"]
             else:
                 cmd = [sys.executable, "-m", "polished.plan_cut", apath, ep_dir, "--game", self.a.series,
@@ -224,7 +228,10 @@ class Run:
                 if ans:   # lane 4: a Claude session answered this prompt; validate it, no API call
                     open(os.path.join(ep_dir, "plan_llm_session.json"), "w", encoding="utf-8").write(ans)
                     cmd += ["--reuse-llm", os.path.join(ep_dir, "plan_llm_session.json")]
-                for f in ("plan.json", "tail.json", "hold.json"):
+                elif done and done["rc"] not in (0, 2, 3) and os.path.exists(os.path.join(ep_dir, "plan_llm.json")):
+                    # it crashed AFTER the model answered: check the same answer again, no second paid call
+                    cmd += ["--reuse-llm", os.path.join(ep_dir, "plan_llm.json")]
+                for f in ("plan.json", "tail.json", "hold.json", "llm_calls.json"):   # calls: never count one twice
                     if os.path.exists(os.path.join(ep_dir, f)):
                         os.remove(os.path.join(ep_dir, f))
                 r = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True, encoding="utf-8")
@@ -245,6 +252,10 @@ class Run:
                 continue
             if rc == 2:
                 t = jload(os.path.join(ep_dir, "tail.json"))
+                if t.get("quiet_words") is not None:
+                    self.st.event("note", "only %d words in this window: treated as away (asleep on the resting "
+                                  "screen). If you were playing, tell Claude (the audio may be broken)."
+                                  % t["quiet_words"], urgent=False)
                 return plans, lo + float(t["next_start"]), None
             if rc == 3:
                 h = jload(os.path.join(ep_dir, "hold.json"), {})

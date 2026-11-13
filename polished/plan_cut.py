@@ -88,6 +88,7 @@ AWAY_MIN, AWAY_KEEP = 20 * 60.0, 2.0     # episodes.py AWAY_MIN: 20 min without 
 SESSION_BREAK = 30 * 60.0                # episodes.py: a cut this long ends a session
 SHORT_MIN = 5 * 60.0                     # reported: the last episode before a break / VOD end may be this short
 TAIL_MERGE = 6 * 60.0                    # closing: a leftover under this joins the last episode
+ISLAND_MAX = 60.0                        # s of content before a break / the VOD end: less is not an episode
 
 
 COLD_REACH = 2.5   # s: how far a cold-open edge may move to reach a sentence edge
@@ -149,8 +150,12 @@ def main():
     NS = len(rms)
     segs = an["transcript"]["segments"]
     words = sorted((w["s"], w["e"], w["w"], w.get("p", 1.0)) for s in segs for w in (s.get("words") or []))
-    if len(words) < 50:
-        sys.exit("ABORT: %d words in %.0f s - a failed transcript, not a quiet stream" % (len(words), dur))
+    # QA 13 Nov: on a 24/7 stream a whole window can be him asleep on the resting screen (whisper hears next to
+    # nothing over the music). That used to ABORT here, the window died 3 times and the worker skipped it.
+    # Like episodes.py: almost no speech = away; the AWAY rule below cuts it and the conductor posts one line.
+    quiet_words = len(words) if len(words) < 50 else None
+    if quiet_words is not None:
+        print("NOTE: only %d words in %.0f s: treated as away (asleep on the resting screen)" % (len(words), dur))
 
     # ---- speech + action masks (wd2_cuts.py)
     speech = np.zeros(NS, bool)
@@ -393,7 +398,7 @@ def main():
             if c[0] <= start < c[1]:
                 start = float(c[1])
     elif a.vod_start:
-        start = max(0.0, words[0][0] - 3.0)          # the VOD opens: just before the first word
+        start = max(0.0, words[0][0] - 3.0) if words else 0.0   # the VOD opens: just before the first word
     else:
         head_gaps = [g for g in gaps if 5.0 <= g["t"] <= 240.0]
         if not head_gaps:
@@ -424,8 +429,8 @@ def main():
         return sum(e - s for s, e in subtract(lo, hi, cuts))
 
     def tail(next_start, why):
-        json.dump({"next_start": round(next_start, 3), "why": why, "left_content_s": round(content(next_start, dur), 1)},
-                  open(os.path.join(a.work, "tail.json"), "w", encoding="utf-8"))
+        json.dump({"next_start": round(next_start, 3), "why": why, "left_content_s": round(content(next_start, dur), 1),
+                   "quiet_words": quiet_words}, open(os.path.join(a.work, "tail.json"), "w", encoding="utf-8"))
         print("TAIL: %s; next window starts at %.1f" % (why, next_start))
         sys.exit(2)
 
@@ -439,6 +444,13 @@ def main():
     left = content(start, close_t)
     if left < 1.0 and brk:
         tail(float(brk[1]), "nothing but the break left")   # skip the break itself; the next episode starts after it
+    # QA 13 Nov: a few seconds before a sleep (the window opening 2 s before the away cut, or "hello chat, brb"
+    # between two naps) made a seconds-long "episode" that has no cold open: ABORT, the window died 3 times and
+    # was skipped. Under ISLAND_MAX it is not an episode: it goes with the break.
+    if brk and left < ISLAND_MAX:
+        tail(float(brk[1]), "only %.0f s before the break: not an episode, skipped with it" % left)
+    if a.final and not brk and left < ISLAND_MAX:
+        tail(dur, "only %.0f s left at the end of the VOD: not an episode" % left)
     if left < MIN_EP and not closing:
         tail(start, "only %.0f s of content left in the window" % left)
     if closing and left < MIN_EP + TAIL_MERGE:

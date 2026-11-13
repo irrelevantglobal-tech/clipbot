@@ -393,3 +393,53 @@ class StingMediaSources(unittest.TestCase):
                 mock.patch.dict(os.environ, {"CAMP_ASSETS_SOURCES": "modal-volume://x,github://o/r@main", "CAMP_ASSETS_URL": ""}):
             with self.assertRaisesRegex(SystemExit, "still missing after every source"):
                 cf.ensure(assets="unused")
+
+
+class PlanRetry(unittest.TestCase):
+    """QA 13 Nov: a planner crash (rc 1, e.g. the API overloaded for a minute) was saved in plans.json and REPLAYED on
+    every retry without planning again: 3 dead runs in a few minutes, then the worker skipped the window."""
+
+    def setUp(self):
+        self.d = tempfile.mkdtemp()
+        self.st = os.path.join(self.d, "state")
+        os.makedirs(self.st)
+        with open(os.path.join(self.st, "analysis.json"), "w") as f:
+            json.dump({"duration": 100}, f)
+        with open(os.path.join(self.st, "plans.json"), "w") as f:
+            json.dump({"vodstart": {"rc": 1}}, f)
+
+    def tearDown(self):
+        shutil.rmtree(self.d, ignore_errors=True)
+
+    def plan_all(self):
+        a = SimpleNamespace(answers="", max_episodes=0, series="GTA 6", state=self.st, out=os.path.join(self.d, "out"))
+        run = C.Run(a)
+        run.st = mock.Mock()
+        run.brand = "B"
+        calls = []
+
+        def fake_run(cmd, **k):
+            calls.append(cmd)
+            with open(os.path.join(cmd[4], "hold.json"), "w") as f:
+                json.dump({"why": "x", "start": 0}, f)
+            return SimpleNamespace(returncode=3, stdout="", stderr="")
+        with mock.patch.object(C.subprocess, "run", fake_run):
+            res = run.plan_all({}, 0.0, False, vod_start=True)
+        return calls, res
+
+    def test_a_crash_is_planned_again_on_the_retry(self):
+        calls, (plans, nxt, hold) = self.plan_all()
+        self.assertEqual(len(calls), 1)
+        self.assertNotIn("--reuse-llm", calls[0])                    # no saved answer: a real new call
+        self.assertIsNotNone(hold)
+
+    def test_a_crash_after_the_answer_rechecks_that_answer_for_free(self):
+        d = os.path.join(self.st, "plan_vodstart")
+        os.makedirs(d)
+        with open(os.path.join(d, "plan_llm.json"), "w") as f:
+            f.write("{}")
+        with open(os.path.join(d, "llm_calls.json"), "w") as f:
+            json.dump([{"cost": 0.04}], f)
+        calls, _ = self.plan_all()
+        self.assertIn("--reuse-llm", calls[0])
+        self.assertFalse(os.path.exists(os.path.join(d, "llm_calls.json")))   # the first call is not counted twice

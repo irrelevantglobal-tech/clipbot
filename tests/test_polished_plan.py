@@ -398,3 +398,55 @@ class SeamPolish(unittest.TestCase):
         an["menu"] = [{"t": float(t), "menu": 0.1, "scene": 0.02} for t in range(3600)]
         p = self.plan_of(an, "--start", "0")
         self.assertGreater(p["keep"][0][0], 250.0, p["keep"][:3])
+
+
+class Asleep(unittest.TestCase):
+    """QA 13 Nov: a 24/7 marathon night. Each of these used to exit 1 (ABORT), the window died 3 times and the
+    worker skipped 4 h of stream with nothing cut from it."""
+
+    def setUp(self):
+        self.d = tempfile.mkdtemp()
+
+    def tearDown(self):
+        shutil.rmtree(self.d, ignore_errors=True)
+
+    def run_one(self, an, *args):
+        ap = os.path.join(self.d, "an.json")
+        with open(ap, "w") as f:
+            json.dump(an, f)
+        w = os.path.join(self.d, "w")
+        r = plan(ap, w, "--no-llm", *args)
+        tail = None
+        if r.returncode == 2:
+            with open(os.path.join(w, "tail.json"), encoding="utf-8") as f:
+                tail = json.load(f)
+        return r, tail
+
+    def test_whole_window_asleep_is_away_not_a_crash(self):
+        r, tail = self.run_one(synth(4 * 3600, away=[(0, 4 * 3600)]), "--start", "0")
+        self.assertEqual(r.returncode, 2, r.stdout[-400:] + r.stderr[-400:])
+        self.assertEqual(tail["quiet_words"], 0)
+        self.assertGreater(tail["next_start"], 4 * 3600 - 10)       # the next window starts after the sleep
+
+    def test_window_opening_asleep_starts_the_next_one_when_he_wakes(self):
+        wake = 4 * 3600 - 600
+        r, tail = self.run_one(synth(4 * 3600, away=[(0, wake)]), "--start", "0")
+        self.assertEqual(r.returncode, 2, r.stdout[-400:] + r.stderr[-400:])
+        self.assertLessEqual(tail["next_start"], wake)               # nothing he said after waking is skipped
+        self.assertGreater(tail["next_start"], wake - 10)
+
+    def test_a_few_seconds_between_two_naps_go_with_the_break(self):
+        an = synth(4 * 3600, away=[(0, 3000), (3020, 4 * 3600)])     # "hello chat, brb" for ~15 s
+        r, tail = self.run_one(an, "--start", "0")
+        self.assertEqual(r.returncode, 2, r.stdout[-400:] + r.stderr[-400:])
+        self.assertIn("not an episode", tail["why"])
+
+    def test_final_window_with_seconds_left_ends_the_vod(self):
+        an = synth(1800, away=[(40, 1800)])                          # 40 s of talk, then the stream ends asleep
+        r, tail = self.run_one(an, "--start", "0", "--final")
+        self.assertEqual(r.returncode, 2, r.stdout[-400:] + r.stderr[-400:])
+        self.assertGreaterEqual(tail["next_start"], 1800 - 3)
+
+    def test_vod_start_with_no_words(self):
+        r, tail = self.run_one(synth(4 * 3600, away=[(0, 4 * 3600)]), "--vod-start")
+        self.assertEqual(r.returncode, 2, r.stdout[-400:] + r.stderr[-400:])
