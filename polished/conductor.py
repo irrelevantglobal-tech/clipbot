@@ -186,6 +186,58 @@ class Run:
         self.all_out = True
         raise Hold("no GPU lane can take this window: " + "; ".join(why))
 
+    # ------------------------------------------------------------------ sleep skip (24/7 marathon)
+    def sleep_skip(self, vod, lo, hi, created):
+        """-> sleepskip report; report["skips"] = [[a, b]] VOD seconds whose GPU analysis is skipped (polished/
+        sleepskip.py: Resting screen + no word, CPU only, before any GPU is rented). Off unless GTA6_SLEEP_SKIP=1.
+        Any failure = nothing skipped (the whole window is scanned, as before). A retry reuses the saved decision,
+        so the chunk grid always matches the chunks already in the state dir."""
+        p = os.path.join(self.state, "sleepskip.json")
+        old = jload(p)
+        if old and abs(old["window"][0] - lo) < 0.01 and abs(old["window"][1] - hi) < 0.01:
+            return old
+        rep = {"window": [lo, hi], "skips": []}
+        if os.environ.get("GTA6_SLEEP_SKIP") != "1":
+            rep["off"] = True
+            return rep
+        self.st.board(force=True, stage="sleep check (CPU: Resting screen? anyone talking?)", eta=time.time() + 15 * 60)
+        try:
+            from datetime import datetime
+            from polished import sleepskip
+            t0 = datetime.fromisoformat(created.replace("Z", "+00:00")).timestamp()
+            presses = [dict(x, t=x["t"] - t0) for x in self.st.sleep_log()]
+            src = sleepskip.TwitchSource(vod)
+            rep = sleepskip.decide(src, lo, hi, presses)
+            rep["fetch"] = {"segments": [0, 0], "recording": bool(src.recording), "vod_total": round(src.total, 3),
+                            "fps": 60.0}
+        except Exception as e:   # noqa: BLE001 - fail open: scan everything
+            rep = {"window": [lo, hi], "skips": [], "error": str(e)[:300]}
+            log("sleep skip failed, scanning the whole window:", rep["error"])
+            self.st.event("note", "Sleep check could not run (%s): the whole window is scanned, nothing skipped."
+                          % str(e)[:120], urgent=False)
+        jdump(rep, p)
+        return rep
+
+    def tell_sleep(self, rep, lo):
+        sk = rep.get("skips") or []
+        for p in rep.get("presses", []):   # what happened to each 💤 press inside this window
+            if p.get("end") is None:
+                self.st.event("sleep", "💤 press at stream time %s (%s): still on at the end of this window."
+                              % (hm(p["t"]), p.get("by") or "?"), urgent=False)
+            else:
+                self.st.event("awake", "💤 press at stream time %s (%s) ended at %s: %s." % (
+                    hm(p["t"]), p.get("by") or "?", hm(p["end"]), p.get("why", "")[:160]), urgent=False)
+        if sk:
+            h = sum(b - a for a, b in sk) / 3600
+            spans = ", ".join("%s-%s" % (hm(a), hm(b)) for a, b in sk)
+            self.st.event("sleep", "Sleep skip ON for %s stream time (Resting screen, nobody talking): %.1f h not sent "
+                          "to the GPU. The minutes around it are analysed as usual." % (spans, h), urgent=False)
+            self.st.board(force=True, sleep="💤 ON %s (%.1f h skipped)" % (spans, h))
+            self.notes.append("sleep skip: %s" % spans)
+        elif not rep.get("off"):
+            self.st.board(force=True, sleep="☀️ OFF (nothing asleep long enough to skip%s)" % (
+                "; check failed, all scanned" if rep.get("error") else ""))
+
     # ------------------------------------------------------------------ analysis
     def chunks(self, lo, hi):
         out, t = [], lo
@@ -194,20 +246,33 @@ class Run:
             t += CHUNK
         return out
 
-    def analyse(self, vod, lo, hi, gpu):
+    def analyse(self, vod, lo, hi, gpu, sleep=None):
+        skips = (sleep or {}).get("skips") or []
+        if skips:
+            from polished import sleepskip
+            plan = sleepskip.chunk_plan(lo, hi, skips, CHUNK)
+        else:   # sleep skip off or nothing to skip: exactly the old 30-min grid
+            plan = [(a, b, False) for a, b in self.chunks(lo, hi)]
         todo, got = [], {}
-        for c in self.chunks(lo, hi):
+        for a_, b_, sk in plan:
+            c = (a_, b_)
             p = os.path.join(self.state, "chunk_%d.json" % int(c[0]))
             r = jload(p)
-            if r and abs(r["lo"] - c[0]) < 0.01:
+            if r and abs(r["lo"] - c[0]) < 0.01 and bool(r.get("skipped")) == sk and (
+                    abs(r["hi"] - c[1]) < 1.0 or (not sk and c[1] >= hi - 0.5 and r["hi"] <= c[1])):
+                got[c] = r
+            elif sk:   # asleep on the Resting screen: no GPU (sleepskip.skipped_chunk says what it holds)
+                r = sleepskip.skipped_chunk(vod, a_, b_, sleep["fetch"])
+                jdump(r, p)
                 got[c] = r
             else:
                 todo.append(c)
-        log(f"analysis: {len(got)} chunk(s) reused from state, {len(todo)} to run on {self.lane}")
+        n_sk = sum(1 for r in got.values() if r.get("skipped"))
+        log(f"analysis: {len(got) - n_sk} chunk(s) reused from state, {n_sk} skipped (asleep), {len(todo)} to run on {self.lane}")
         n_all = len(got) + len(todo)
         self.st.board(force=True, stage="analysing (whisper, picture, menus)", done=len(got), total=n_all,
                       eta=time.time() + (12 * 60 if self.lane == "modal" else 7 * 60 * len(todo) + 15 * 60))
-        for c, r in gpu.analyze_many(vod, todo):
+        for c, r in (gpu.analyze_many(vod, todo) if todo else []):
             jdump(r, os.path.join(self.state, "chunk_%d.json" % int(c[0])))
             got[c] = r
             self.st.board(done=len(got))
@@ -638,12 +703,22 @@ def main():
         run.money["api"] = max(0.0, run.api_budget() - run.api_spent0)
         if run.gem_budget() > 0:
             run.money["gemini"] = max(0.0, run.gem_budget() - run.gem_spent0)
+        sleep = run.sleep_skip(a.vod, lo, hi, v["created_at"])
+        run.tell_sleep(sleep, lo)
+        gpu_s = (hi - lo) - sum(b - a_ for a_, b in sleep.get("skips") or [])
+        man["sleep_skips"] = sleep.get("skips") or []
         run.st.board(force=True, stage="choosing a lane", money=run.money)
-        run.lane = "local" if a.lane == "local" else run.pick_lane((hi - lo) / 3600)
+        if gpu_s < 1.0:   # the whole window is him asleep: nothing to analyse, no GPU rented
+            run.lane = "none"
+        else:
+            run.lane = "local" if a.lane == "local" else run.pick_lane(gpu_s / 3600)
         run.st.board(force=True, lane={"modal": "Modal (cloud GPU)", "vast": "Vast.ai (rented GPU)",
-                                       "local": "laptop"}[run.lane], money=run.money)
+                                       "local": "laptop", "none": "none (asleep: no GPU needed)"}[run.lane],
+                     money=run.money)
         man["lane"] = run.lane
-        if run.lane == "local":
+        if run.lane == "none":
+            ctx = _null(None)
+        elif run.lane == "local":
             ctx = _null(LocalLane(run))
         elif run.lane == "modal":
             lane_cm = ModalLane(run)
@@ -652,7 +727,7 @@ def main():
         else:
             ctx = VastLane(run, (hi - lo) / 3600)
         with ctx as gpu:
-            an = run.analyse(a.vod, lo, hi, gpu)
+            an = run.analyse(a.vod, lo, hi, gpu, sleep)
             plans, next_from, hold = run.plan_all(an, lo, a.final, vod_start=(lo < 1.0))
             log(f"planned {len(plans)} episode(s); next window from {next_from}; hold: {hold}")
             hold = process(run, gpu, an, plans, lo, man, common, episodes) or hold

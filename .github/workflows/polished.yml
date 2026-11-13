@@ -82,6 +82,8 @@ jobs:
       GTA6_GEMINI_PLAN_MODEL: ${{ vars.GTA6_GEMINI_PLAN_MODEL }}
       GTA6_GEMINI_REVIEW_MODEL: ${{ vars.GTA6_GEMINI_REVIEW_MODEL }}
       GTA6_GCP_PROJECT: ${{ vars.GTA6_GCP_PROJECT }}
+      # Sleep skip (polished/sleepskip.py): "1" = skip GPU analysis of Resting-screen stretches nobody talks over.
+      GTA6_SLEEP_SKIP: ${{ vars.GTA6_SLEEP_SKIP }}
       GITHUB_TOKEN: ${{ github.token }}
       POLISHED_FAULTS: ${{ inputs.faults }}
       POLISHED_DRY: ${{ inputs.upload && '0' || '1' }}
@@ -106,6 +108,17 @@ jobs:
           df -h / | tail -1
       - run: for i in 1 2 3 4; do sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg fonts-dejavu-core && break; echo "apt failed ($i), retrying in 30 s"; sleep 30; done; command -v ffmpeg > /dev/null
       - run: pip install -q -r requirements.txt modal numpy pillow google-auth
+      - name: Sleep-skip CPU tools (only with GTA6_SLEEP_SKIP=1; if this fails the check fails open = everything scanned)
+        if: vars.GTA6_SLEEP_SKIP == '1'
+        continue-on-error: true
+        run: pip install -q torch==2.5.1 --index-url https://download.pytorch.org/whl/cpu && pip install -q open_clip_torch==2.29.0
+      - name: Cache the sleep-skip models (CLIP ViT-B-32, whisper tiny.en)
+        if: vars.GTA6_SLEEP_SKIP == '1'
+        continue-on-error: true
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: sleepskip-models-v1
       - name: Google Cloud sign-in for the Gemini fallback (keyless; a failure here only means Claude-dry windows HOLD)
         if: vars.GTA6_GEMINI_BUDGET != '' && vars.GTA6_GCP_WIF_PROVIDER != ''
         continue-on-error: true

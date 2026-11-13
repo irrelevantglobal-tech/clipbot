@@ -22,7 +22,8 @@ import urllib.request
 BOARD_EVERY = 240          # s between heartbeat edits (Discord PATCH: no KV, ~15/h)
 STUCK_MIN = 20             # the watchdog's threshold (Kamiza); written on the board so it is visible
 ICON = {"started": "▶️", "lane": "🔀", "switch_soon": "⚠️", "progress": "⏳", "held": "⏸️", "done": "✅",
-        "died": "💥", "credit": "💸", "all_out": "🛑", "stuck": "🧊", "retry": "🔁", "note": "ℹ️"}
+        "died": "💥", "credit": "💸", "all_out": "🛑", "stuck": "🧊", "retry": "🔁", "note": "ℹ️", "sleep": "💤",
+        "awake": "☀️"}
 URGENT = {"held", "died", "all_out", "credit", "stuck"}
 
 
@@ -42,16 +43,36 @@ class Status:
 
     # ---------------- transport
     def _post(self, path, body):
+        """-> the worker's JSON answer (or None). Never raises: status must never break the edit."""
         if not (self.worker and self.token):
             print("[status]", json.dumps(body, ensure_ascii=False)[:600], flush=True)
-            return
+            return None
         req = urllib.request.Request(self.worker + path, data=json.dumps(body).encode(), method="POST", headers={
             "Authorization": "Bearer " + self.token, "Content-Type": "application/json", "User-Agent": "ClipBot/1.0"})
         try:
             with urllib.request.urlopen(req, timeout=20) as r:
-                r.read()
+                raw = r.read()
+            try:
+                return json.loads(raw or b"null")
+            except ValueError:
+                return None
         except Exception as e:   # noqa: BLE001 - status must never break the edit
             print("[status] could not post (%s)" % str(e)[:120], flush=True)
+            return None
+
+    def sleep_log(self):
+        """The 💤/☀️ presses from Kamiza's Sleep-skip buttons: [{"t": unix s, "mode": "asleep"|"awake", "by"}], oldest
+        first. Read through the Forge like every status post (kind "sleep_log": Kamiza answers, posts nothing).
+        Anything unreadable = [] (presses only ever WIDEN what is skipped, so none = the safe side)."""
+        got = self._post("/clipbot/epstatus", {"kind": "sleep_log"})
+        out = []
+        for p in (got or {}).get("presses", []) if isinstance(got, dict) else []:
+            try:
+                if p.get("mode") in ("asleep", "awake"):
+                    out.append({"t": float(p["t"]), "mode": p["mode"], "by": str(p.get("by", ""))[:40]})
+            except (TypeError, ValueError, AttributeError):
+                continue
+        return sorted(out, key=lambda p: p["t"])
 
     def win(self):
         f = lambda s: "%d:%02d" % (int(s) // 3600, int(s) % 3600 // 60)   # noqa: E731
@@ -85,6 +106,8 @@ class Status:
             lines.append("**Expected by:** %s" % _ts(s["eta"]))
         if s.get("detail"):
             lines.append(str(s["detail"])[:300])
+        if s.get("sleep"):
+            lines.append("**Sleep skip:** " + str(s["sleep"])[:200])
         money = []
         if "modal" in m:
             money.append("Modal $%.2f of $30" % m["modal"])
