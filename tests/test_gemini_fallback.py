@@ -42,10 +42,11 @@ class FallbackTest(unittest.TestCase):
 
     def test_dry_claude_goes_to_gemini_and_counts_apart(self):
         b = llm.Budget(0.0, 0.0, gem_limit=10.0, gem_spent=1.0)
-        with mock.patch.object(gemini, "generate", return_value=('{"x": 1}', USAGE, "STOP", "gemini-3.5-flash-lite-001")):
+        with mock.patch.object(gemini, "generate", return_value=('{"x": 1}', USAGE, "STOP", "gemini-3.1-pro-preview")) as g:
             text, c = b.call("gta6-review-plan", "p" * 1000, model="sonnet")
+        self.assertEqual(g.call_count, 1)
         self.assertEqual(text, '{"x": 1}')
-        self.assertAlmostEqual(c, (20000 * 0.30 + 2000 * 2.50) / 1e6)
+        self.assertAlmostEqual(c, (20000 * 2.00 + 2000 * 12.00) / 1e6)
         self.assertEqual(b.spent, 0.0)                       # Claude money untouched
         self.assertAlmostEqual(b.gem_spent, 1.0 + c)
         self.assertEqual(b.calls[-1]["lane"], "gemini")
@@ -55,7 +56,32 @@ class FallbackTest(unittest.TestCase):
         b = llm.Budget(0.0, 0.0, gem_limit=10.0)
         with mock.patch.object(gemini, "generate", return_value=("{}", USAGE, "STOP", "m")) as g:
             b.call("gta6-review-episode", "p", model="haiku", images=())
-        self.assertEqual(g.call_args[0][2], gemini.DEFAULT_MODEL["haiku"])
+        self.assertEqual(g.call_args[0][2], gemini.DEFAULT_MODELS["haiku"][0])
+
+    def test_broken_json_tries_the_next_model_and_counts_both(self):
+        b = llm.Budget(0.0, 0.0, gem_limit=10.0)
+        answers = [('{"end_option": 2, "menu_cut": ["M0" }', USAGE, "STOP", "a"), ('{"end_option": 2}', USAGE, "STOP", "b")]
+        with mock.patch.object(gemini, "generate", side_effect=answers) as g:
+            text, c = b.call("gta6-review-plan", "p", model="sonnet")
+        self.assertEqual([x[0][2] for x in g.call_args_list], gemini.DEFAULT_MODELS["sonnet"])
+        self.assertEqual(text, '{"end_option": 2}')
+        self.assertEqual(len(b.calls), 2)
+        self.assertAlmostEqual(b.gem_spent, sum(x["cost"] for x in b.calls))
+
+    def test_all_answers_broken_returns_the_last_so_the_caller_holds(self):
+        b = llm.Budget(0.0, 0.0, gem_limit=10.0)
+        with mock.patch.object(gemini, "generate", return_value=("not json", USAGE, "STOP", "m")):
+            text, c = b.call("gta6-review-episode", "p", model="haiku")
+        self.assertEqual(text, "not json")             # review.py / plan_cut.py then HOLD "answer unusable"
+        self.assertEqual(len(b.calls), 2)
+
+    def test_first_model_error_falls_to_the_second(self):
+        b = llm.Budget(0.0, 0.0, gem_limit=10.0)
+        with mock.patch.object(gemini, "generate", side_effect=[gemini.GeminiDry("HTTP 404: retired"),
+                                                                ('{"verdict": "pass"}', USAGE, "STOP", "b")]):
+            text, c = b.call("gta6-review-episode", "p", model="haiku")
+        self.assertIn("pass", text)
+        self.assertEqual(len(b.calls), 1)
 
     def test_gemini_cap_refuses_before_calling(self):
         b = llm.Budget(0.0, 0.0, gem_limit=1.0, gem_spent=0.999)

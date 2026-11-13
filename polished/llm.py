@@ -56,27 +56,40 @@ class Budget:
             return self._gemini(task, prompt, model, max_tokens, images, temperature, str(ex))
 
     def _gemini(self, task, prompt, model, max_tokens, images, temperature, why):
+        """Each model of the role in turn (gemini.models_for): an error or an answer that isn't JSON moves on to
+        the next. Every try is cap-checked first and every paid answer is recorded. All errors -> Dry (HOLD);
+        all answers unusable -> the last answer goes back, and the caller HOLDs on it exactly as for Claude."""
         from polished import gemini
-        mid = gemini.model_for(model)
-        if gemini.price_of(mid) is None:
-            raise Dry(f"{why}; Gemini fallback refused: no price known for {mid}")
-        worst = gemini.worst_case(mid, prompt, len(images), max_tokens)
-        gleft = self.gem_limit - self.gem_spent
-        if worst > gleft:
-            raise Dry(f"{why}; Gemini fallback: worst case ${worst:.3f} > ${gleft:.3f} left of the ${self.gem_limit:.2f} "
-                      "Gemini budget")
-        try:
-            text, usage, finish, ver = gemini.generate(task, prompt, mid, max_tokens, images=images, temperature=temperature)
-        except gemini.GeminiDry as e:
-            raise Dry(f"{why}; Gemini fallback failed: {e}")
-        c = gemini.cost(mid, usage)
-        self.gem_spent += c
-        self.last_lane = "gemini " + mid
-        self.calls.append({"at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "task": task, "model": ver,
-                           "lane": "gemini", "stop": finish, "in": usage.get("promptTokenCount"),
-                           "out": (usage.get("candidatesTokenCount") or 0) + (usage.get("thoughtsTokenCount") or 0),
-                           "cost": round(c, 6), "why_fallback": why[:200]})
-        return text, c
+        errs, last = [], None
+        for mid in gemini.models_for(model):
+            if gemini.price_of(mid) is None:
+                errs.append(f"no price known for {mid}")
+                continue
+            worst = gemini.worst_case(mid, prompt, len(images), max_tokens)
+            gleft = self.gem_limit - self.gem_spent
+            if worst > gleft:
+                errs.append(f"worst case ${worst:.3f} > ${gleft:.3f} left of the ${self.gem_limit:.2f} Gemini budget")
+                break
+            try:
+                text, usage, finish, ver = gemini.generate(task, prompt, mid, max_tokens, images=images,
+                                                           temperature=temperature)
+            except gemini.GeminiDry as e:
+                errs.append(str(e)[:200])
+                continue
+            c = gemini.cost(mid, usage)
+            self.gem_spent += c
+            self.last_lane = "gemini " + mid
+            self.calls.append({"at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "task": task, "model": ver,
+                               "lane": "gemini", "stop": finish, "in": usage.get("promptTokenCount"),
+                               "out": (usage.get("candidatesTokenCount") or 0) + (usage.get("thoughtsTokenCount") or 0),
+                               "cost": round(c, 6), "why_fallback": why[:200]})
+            last = (text, sum(x["cost"] for x in self.calls if x.get("lane") == "gemini" and x.get("task") == task))
+            if gemini.usable_json(text):
+                return last
+            errs.append(f"{mid}: answer not JSON")
+        if last:
+            return last
+        raise Dry(f"{why}; Gemini fallback: " + " | ".join(errs or ["no model configured"]))
 
     def _claude(self, task, prompt, model, max_tokens, effort, images, temperature):
         m = MODELS[model]
