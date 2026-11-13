@@ -567,6 +567,36 @@ def main():
                             % (MIN_EP, end["t"], later[0]["t"]))
             end = dict(later[0], content=content(start, later[0]["t"]))
     bounds = (start, end["t"])
+    # 13 Nov polish (BRB proof review): (b) a dead stretch that starts within HEAD_SWALLOW s of the episode start
+    # takes that short head with it, so an episode never opens on a few seconds of whisper noise; (a) when the
+    # first words after a cut repeat words he said just before it (he restarted a line across a pause), the
+    # first copy goes too, so the line is heard once.
+    HEAD_SWALLOW, REPEAT_REACH, REPEAT_MIN = 6.0, 8.0, 3
+
+    def tok(w):
+        return re.sub(r"[^a-z0-9']", "", str(w).lower())
+    fixed = []
+    for c in sorted(cuts):
+        a0, b0 = c[0], c[1]
+        if bounds[0] < a0 <= bounds[0] + HEAD_SWALLOW and b0 - a0 >= 20.0:
+            a0 = bounds[0]
+        left = [w for w in words if a0 - REPEAT_REACH <= w[0] and w[1] <= a0 + 0.05]
+        right = [tok(w[2]) for w in words if b0 - 0.05 <= w[0] < b0 + REPEAT_REACH][:REPEAT_MIN + 3]
+        lt = [tok(w[2]) for w in left]
+        best = None
+        for k in range(min(len(right), len(lt)), REPEAT_MIN - 1, -1):
+            if len(set(right[:k])) < 2:
+                continue
+            hits = [i for i in range(len(lt) - k + 1) if lt[i:i + k] == right[:k]]
+            if hits:
+                best = left[hits[0]][0] - 0.08
+                break
+        prev_end = fixed[-1][1] if fixed else bounds[0]
+        if best is not None and best > prev_end + 0.5 and a0 - best <= REPEAT_REACH and bounds[0] <= b0 <= bounds[1]:
+            problems.append("seam %.1f: removed a repeated line (%.1f s) said again after the cut" % (b0, a0 - best))
+            a0 = round(best, 3)
+        fixed.append([a0, b0] + list(c[2:]))
+    cuts = merge(fixed)
     keep = subtract(bounds[0], bounds[1], cuts)
 
     # cold open: snap to word gaps, must sit in ONE kept span, 5-15 s, not dead picture

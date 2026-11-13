@@ -351,3 +351,50 @@ class ColdOpenSentences(unittest.TestCase):
         self.assertTrue(first == 0 or words[first - 1]["w"].endswith("."), (s, e))               # opens a sentence
         self.assertTrue(words[last]["w"].endswith("."), (s, e))                                  # ends one
         self.assertTrue(5.0 <= e - s <= 15.5)
+
+
+class SeamPolish(unittest.TestCase):
+    """13 Nov BRB-proof review: a line heard twice across a cut, and an episode opening on whisper noise."""
+
+    def setUp(self):
+        self.d = tempfile.mkdtemp()
+
+    def tearDown(self):
+        shutil.rmtree(self.d, ignore_errors=True)
+
+    def plan_of(self, an, *args):
+        ap = os.path.join(self.d, "an.json")
+        json.dump(an, open(ap, "w"))
+        r = plan(ap, os.path.join(self.d, "w"), "--no-llm", *args)
+        self.assertEqual(r.returncode, 0, r.stdout[-600:])
+        return json.load(open(os.path.join(self.d, "w", "plan.json"), encoding="utf-8"))
+
+    def test_line_said_again_after_a_cut_is_heard_once(self):
+        an = synth(3600)
+        line = ["where's", "the", "clothing", "store"]
+        segs = [s for s in an["transcript"]["segments"] if not 600 <= s["s"] < 700]
+        for t0 in (600.0, 690.0):                      # said, a long silence (cut), said again
+            ws = [{"w": w, "s": t0 + i * 0.4, "e": t0 + i * 0.4 + 0.3, "p": 0.9} for i, w in enumerate(line)]
+            segs.append({"s": t0, "e": t0 + 1.6, "text": " ".join(line), "words": ws})
+        segs.sort(key=lambda s: s["s"])
+        an["transcript"]["segments"] = segs
+        for i in range(int(603.0 / 0.1), int(689.0 / 0.1)):   # the silence between is absolutely quiet
+            an["audio_map"]["rms"][i] = -80.0
+        for v in an["visual"]:
+            if 603 <= v["t"] < 689:
+                v["diff"] = 0.5
+        p = self.plan_of(an, "--start", "0")
+        kept_first = sum(max(0, min(e, 601.5) - max(s, 600.0)) for s, e in p["keep"])
+        kept_second = sum(max(0, min(e, 691.5) - max(s, 690.0)) for s, e in p["keep"])
+        self.assertLess(kept_first, 0.3, p["keep"][:6])
+        self.assertGreater(kept_second, 1.3)
+
+    def test_noise_head_before_a_dead_stretch_is_not_the_opening(self):
+        an = synth(3600)
+        an["transcript"]["segments"] = [s for s in an["transcript"]["segments"] if not 3 <= s["s"] < 300]
+        for v in an["visual"]:
+            if 3 <= v["t"] < 300:
+                v["diff"] = 1.3
+        an["menu"] = [{"t": float(t), "menu": 0.1, "scene": 0.02} for t in range(3600)]
+        p = self.plan_of(an, "--start", "0")
+        self.assertGreater(p["keep"][0][0], 250.0, p["keep"][:3])
