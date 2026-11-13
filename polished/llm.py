@@ -61,7 +61,7 @@ class Budget:
         all answers unusable -> the last answer goes back, and the caller HOLDs on it exactly as for Claude."""
         from polished import gemini
         errs, last = [], None
-        for mid in gemini.models_for(model):
+        for mid in gemini.models_for(task):
             if gemini.price_of(mid) is None:
                 errs.append(f"no price known for {mid}")
                 continue

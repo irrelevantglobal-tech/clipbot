@@ -56,14 +56,20 @@ class FallbackTest(unittest.TestCase):
         b = llm.Budget(0.0, 0.0, gem_limit=10.0)
         with mock.patch.object(gemini, "generate", return_value=("{}", USAGE, "STOP", "m")) as g:
             b.call("gta6-review-episode", "p", model="haiku", images=())
-        self.assertEqual(g.call_args[0][2], gemini.DEFAULT_MODELS["haiku"][0])
+        self.assertEqual(g.call_args[0][2], gemini.DEFAULT_MODELS["review"][0])
+
+    def test_planner_on_haiku_still_gets_the_plan_models(self):
+        b = llm.Budget(0.0, 0.0, gem_limit=10.0)
+        with mock.patch.object(gemini, "generate", return_value=("{}", USAGE, "STOP", "m")) as g:
+            b.call("gta6-review-plan", "p", model="haiku")
+        self.assertEqual(g.call_args[0][2], gemini.DEFAULT_MODELS["plan"][0])
 
     def test_broken_json_tries_the_next_model_and_counts_both(self):
         b = llm.Budget(0.0, 0.0, gem_limit=10.0)
         answers = [('{"end_option": 2, "menu_cut": ["M0" }', USAGE, "STOP", "a"), ('{"end_option": 2}', USAGE, "STOP", "b")]
         with mock.patch.object(gemini, "generate", side_effect=answers) as g:
             text, c = b.call("gta6-review-plan", "p", model="sonnet")
-        self.assertEqual([x[0][2] for x in g.call_args_list], gemini.DEFAULT_MODELS["sonnet"])
+        self.assertEqual([x[0][2] for x in g.call_args_list], gemini.DEFAULT_MODELS["plan"])
         self.assertEqual(text, '{"end_option": 2}')
         self.assertEqual(len(b.calls), 2)
         self.assertAlmostEqual(b.gem_spent, sum(x["cost"] for x in b.calls))

@@ -37,13 +37,19 @@ PRICES = {
     "gemini-3.1-pro": {"in": 2.00, "out": 12.00},     # <= 200K input (our prompts are ~10-30K)
 }
 # (2.5 models: 404 on Vertex global for this project, 13 Nov = retired; not listed so they can't be picked.)
-# Claude role -> Gemini models, tried in order (the planner runs as "sonnet", the reviewer as "haiku").
+# Job -> Gemini models, tried in order. Keyed on the TASK, not the Claude model name, so moving the planner
+# to Haiku (13 Nov idea, to stretch the Claude budget) can't hand planning to the reviewer's models.
 # Picked 13 Nov on saved windows against Claude's own answers (PR notes): as planner 3.1 Pro gave 4/4 usable
 # plans close to Sonnet's, 3.5 Flash 3/4 (one broken JSON), the Flash-Lites broken JSON / early ends. As
 # reviewer 3.5 Flash (low thinking) was 4/4 on two must-fail cuts (BRB card, cold open ending on "The") and
 # a good cut; 3.8 Flash and both Flash-Lites passed the dangling "The" (even at high thinking).
-DEFAULT_MODELS = {"sonnet": ["gemini-3.1-pro-preview", "gemini-3.5-flash"],
-                  "haiku": ["gemini-3.5-flash", "gemini-3.1-pro-preview"]}
+DEFAULT_MODELS = {"plan": ["gemini-3.1-pro-preview", "gemini-3.5-flash"],
+                  "review": ["gemini-3.5-flash", "gemini-3.1-pro-preview"]}
+
+
+def job_of(task):
+    """gta6-review-plan -> plan; gta6-review-episode (and anything else) -> review."""
+    return "plan" if "plan" in (task or "") else "review"
 IMG_TOKENS = 2000          # worst-case tokens per contact sheet (Gemini 3 bills ~1120 at default resolution)
 THINK_ROOM = 8000          # output room for thinking on top of the answer's own max_tokens
 
@@ -54,11 +60,12 @@ class GeminiDry(RuntimeError):
     pass
 
 
-def models_for(role):
+def models_for(task):
     """Comma list from GTA6_GEMINI_PLAN_MODEL / GTA6_GEMINI_REVIEW_MODEL, else the defaults above."""
-    env = os.environ.get("GTA6_GEMINI_PLAN_MODEL" if role == "sonnet" else "GTA6_GEMINI_REVIEW_MODEL", "").strip()
+    job = job_of(task)
+    env = os.environ.get("GTA6_GEMINI_PLAN_MODEL" if job == "plan" else "GTA6_GEMINI_REVIEW_MODEL", "").strip()
     got = [m.strip() for m in env.split(",") if m.strip()]
-    return got or list(DEFAULT_MODELS.get(role, DEFAULT_MODELS["haiku"]))
+    return got or list(DEFAULT_MODELS[job])
 
 
 def usable_json(text):
