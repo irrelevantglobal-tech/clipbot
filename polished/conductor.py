@@ -734,6 +734,14 @@ def process(run, gpu, an, plans, lo, man, common, episodes):
                 m["video"] = have
                 continue
         todo.append((key, pv, t))
+    if fault("stall"):
+        # QA: the board says RUNNING and then goes silent for the whole stall window, so the Kamiza watchdog
+        # (20 min) must post the stuck line; then the run carries on and finishes (13 Nov: the old version only
+        # skipped heartbeats and the run ended in 10 min, so the watchdog never saw a silence)
+        mins = float(os.environ.get("POLISHED_STALL_MIN") or 30)
+        run.st.board(force=True, stage="render, review, upload", detail="QA stall: no update for %.0f min" % mins)
+        log("FAULT stall: silent for %.0f min" % mins)
+        time.sleep(mins * 60)
     sink, stop = queue.Queue(), threading.Event()
     th = threading.Thread(target=gpu.render_many, args=(a.vod, todo, sink, stop), daemon=True)
     th.start()
@@ -743,7 +751,6 @@ def process(run, gpu, an, plans, lo, man, common, episodes):
     for key, pv, t in jobs:
         m = meta[key]
         if "video" not in m:
-            stall_until = time.time() + 60 * float(os.environ.get("POLISHED_STALL_MIN") or 30) if fault("stall") else 0
             t_wait = time.time()
             while key not in ready:
                 try:
@@ -751,8 +758,7 @@ def process(run, gpu, an, plans, lo, man, common, episodes):
                 except queue.Empty:
                     if time.time() - t_wait > 4 * 3600:
                         break
-                    if time.time() > stall_until:      # heartbeat (throttled to one edit per 4 min)
-                        run.st.board(detail="episode %d of %d rendering" % (m["i"], len(jobs)))
+                    run.st.board(detail="episode %d of %d rendering" % (m["i"], len(jobs)))   # heartbeat, max 1 edit / 4 min
                     continue
                 if item is None:
                     break
