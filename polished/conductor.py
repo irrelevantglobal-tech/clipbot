@@ -42,6 +42,7 @@ CHUNK = 1800.0
 MODAL_HANDOFF = float(os.environ.get("GTA6_MODAL_HANDOFF") or 27.0)
 EST_PER_STREAM_H = {"modal": 0.75, "vast": 0.30}    # $ per stream-hour, conservative (T1: ~$0.38-0.54 on L4/A10 + egress)
 RENDER_PAR = 3
+RENDER_TRIES = 2          # 13 Nov fault QA: one transient render failure held the whole window for 6 h; retry once first
 MAX_EPISODES_PER_WINDOW = 30
 MARK = "clipbot:ep:"
 
@@ -334,6 +335,16 @@ class ModalLane:
         sink.put(None)
 
     def _render_one(self, vod, p, t, b, k):
+        for attempt in range(RENDER_TRIES):
+            try:
+                return self._render_attempt(vod, p, t, b, k)
+            except Exception as e:   # noqa: BLE001 - a lost container / cancelled call: once more, then HOLD
+                if attempt + 1 >= RENDER_TRIES:
+                    raise
+                log(f"  render {k} failed ({str(e)[:120]}); rendering it again")
+                self.run.st.event("retry", f"an episode render failed ({str(e)[:100]}); rendering it again", urgent=False)
+
+    def _render_attempt(self, vod, p, t, b, k):
         fc = self.fr.spawn(vod, p, t, self.run.a.series, b["brand"], b["login"], k, b["retired"])
         while True:
             if getattr(self, "cancel_first", False):
@@ -420,33 +431,44 @@ class VastLane:
             yield c, jload(loc)
 
     def render_many(self, vod, jobs, sink, stop):
-        import shlex
         b = self.run.ident
         for k, p, t in jobs:
             if stop.is_set():
                 break
-            try:
-                self.job.check_money()
-                pf = os.path.join(self.job.dir, "plan_%s.json" % k)
-                jdump(dict(p, _retired=b["retired"]), pf)   # in the file, not on the box's command line
-                self.host.put(pf, "/root/plan_%s.json" % k)
-                od = "/root/ep_%s" % k
-                self._py("render %s /root/plan_%s.json %s %s %s %s %s" % (
-                    vod, k, shlex.quote(t), shlex.quote(self.run.a.series), shlex.quote(b["brand"]),
-                    shlex.quote(b["login"]), od), timeout=3600)
-                rep_l = os.path.join(self.job.dir, "rep_%s.json" % k)
-                self.host.get(od + "/report.json", rep_l)
-                rep = jload(rep_l)
-                dst = os.path.join(self.run.a.out, "%s.mp4" % k)
-                self.host.get(od + "/episode.mp4", dst)
-                if os.path.getsize(dst) != rep["size"]:
-                    raise RuntimeError("download size mismatch")
-                self.host.run("rm -rf %s/_work %s/episode.mp4" % (od, od))
-                sink.put((k, dst, rep))
-            except Exception as e:   # noqa: BLE001 - a later episode can't be offered past this one anyway
-                sink.put((k, None, "render failed: %s" % str(e)[:300]))
-                break
+            for attempt in range(RENDER_TRIES):
+                try:
+                    sink.put(self._render_vast(vod, k, p, t, b))
+                    break
+                except Exception as e:   # noqa: BLE001 - once more on the same box, then HOLD
+                    if attempt + 1 < RENDER_TRIES:
+                        log(f"  render {k} failed on the box ({str(e)[:120]}); rendering it again")
+                        self.run.st.event("retry", f"an episode render failed ({str(e)[:100]}); rendering it again",
+                                          urgent=False)
+                        continue
+                    sink.put((k, None, "render failed: %s" % str(e)[:300]))
+                    sink.put(None)
+                    return
         sink.put(None)
+
+    def _render_vast(self, vod, k, p, t, b):
+        import shlex
+        self.job.check_money()
+        pf = os.path.join(self.job.dir, "plan_%s.json" % k)
+        jdump(dict(p, _retired=b["retired"]), pf)   # in the file, not on the box's command line
+        self.host.put(pf, "/root/plan_%s.json" % k)
+        od = "/root/ep_%s" % k
+        self._py("render %s /root/plan_%s.json %s %s %s %s %s" % (
+            vod, k, shlex.quote(t), shlex.quote(self.run.a.series), shlex.quote(b["brand"]),
+            shlex.quote(b["login"]), od), timeout=3600)
+        rep_l = os.path.join(self.job.dir, "rep_%s.json" % k)
+        self.host.get(od + "/report.json", rep_l)
+        rep = jload(rep_l)
+        dst = os.path.join(self.run.a.out, "%s.mp4" % k)
+        self.host.get(od + "/episode.mp4", dst)
+        if os.path.getsize(dst) != rep["size"]:
+            raise RuntimeError("download size mismatch")
+        self.host.run("rm -rf %s/_work %s/episode.mp4" % (od, od))
+        return (k, dst, rep)
 
 
 class LocalLane:
@@ -476,18 +498,24 @@ class LocalLane:
         for k, p, t in jobs:
             if stop.is_set():
                 break
-            try:
-                if outro is None:
-                    outro = stings.outro(self.run.a.series, b["brand"], b["login"], bdir, b["retired"])
-                intro = stings.intro(t, self.run.a.series, b["brand"], b["login"], bdir, b["retired"])
-                mp4, rep = stages.render_episode(vod, p, intro, outro, os.path.join(self.run.a.out, "_ep_" + k))
-                dst = os.path.join(self.run.a.out, "%s.mp4" % k)
-                os.replace(mp4, dst)
-                rep["size"] = os.path.getsize(dst)
-                sink.put((k, dst, rep))
-            except Exception as e:   # noqa: BLE001
-                sink.put((k, None, "render failed: %s" % str(e)[:300]))
-                break
+            for attempt in range(RENDER_TRIES):
+                try:
+                    if outro is None:
+                        outro = stings.outro(self.run.a.series, b["brand"], b["login"], bdir, b["retired"])
+                    intro = stings.intro(t, self.run.a.series, b["brand"], b["login"], bdir, b["retired"])
+                    mp4, rep = stages.render_episode(vod, p, intro, outro, os.path.join(self.run.a.out, "_ep_" + k))
+                    dst = os.path.join(self.run.a.out, "%s.mp4" % k)
+                    os.replace(mp4, dst)
+                    rep["size"] = os.path.getsize(dst)
+                    sink.put((k, dst, rep))
+                    break
+                except Exception as e:   # noqa: BLE001 - once more, then HOLD
+                    if attempt + 1 < RENDER_TRIES:
+                        log(f"  render {k} failed ({str(e)[:120]}); rendering it again")
+                        continue
+                    sink.put((k, None, "render failed: %s" % str(e)[:300]))
+                    sink.put(None)
+                    return
         sink.put(None)
 
 

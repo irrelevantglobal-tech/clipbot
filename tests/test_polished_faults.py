@@ -296,3 +296,30 @@ class VastSetupFailure(unittest.TestCase):
             with self.assertRaises(V.VastError):
                 lane.__enter__()
         self.assertEqual(fv.destroyed, [100])
+
+
+class RenderRetry(unittest.TestCase):
+    """Fault QA 13 Nov: one transient render failure held a whole window for 6 h. Retry once first."""
+
+    def test_modal_render_retried_once_then_succeeds(self):
+        lane = C.ModalLane.__new__(C.ModalLane)
+        lane.run = SimpleNamespace(st=C.Status("1", 0, 100, dry=True), a=SimpleNamespace(series="GTA 6"))
+        calls = []
+
+        def attempt(*a):
+            calls.append(1)
+            if len(calls) == 1:
+                raise RuntimeError("container lost")
+            return {"ok": True}
+        lane._render_attempt = attempt
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(lane._render_one("1", {}, "t", {}, "k"), {"ok": True})
+        self.assertEqual(len(calls), 2)
+
+    def test_modal_render_gives_up_after_two(self):
+        lane = C.ModalLane.__new__(C.ModalLane)
+        lane.run = SimpleNamespace(st=C.Status("1", 0, 100, dry=True), a=SimpleNamespace(series="GTA 6"))
+        lane._render_attempt = lambda *a: (_ for _ in ()).throw(RuntimeError("still lost"))
+        with contextlib.redirect_stdout(io.StringIO()):
+            with self.assertRaisesRegex(RuntimeError, "still lost"):
+                lane._render_one("1", {}, "t", {}, "k")
