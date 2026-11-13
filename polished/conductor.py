@@ -302,12 +302,6 @@ class ModalLane:
                     top_up()
                     time.sleep(2)
                     waited += 2
-                    if waited == 60 and i == 1 and fault("client_dies"):
-                        log("FAULT client_dies: exiting hard mid-render")
-                        os._exit(137)
-                    if waited == 60 and i == 1 and fault("kill_render"):
-                        log("FAULT kill_render: cancelling the first render")
-                        self.cancel_first = True
                 top_up()
                 try:
                     rep = f.result()
@@ -346,6 +340,17 @@ class ModalLane:
 
     def _render_attempt(self, vod, p, t, b, k):
         fc = self.fr.spawn(vod, p, t, self.run.a.series, b["brand"], b["login"], k, b["retired"])
+        # QA faults fire right after the call is placed (a fast render used to finish before the 60 s mark)
+        if fault("client_dies"):
+            time.sleep(5)
+            log("FAULT client_dies: exiting hard while a render runs")
+            os._exit(137)
+        if fault("kill_render") and not getattr(self, "_killed_one", False):
+            self._killed_one = True
+            time.sleep(5)
+            log("FAULT kill_render: cancelling the first render")
+            fc.cancel()
+            raise RuntimeError("render cancelled mid-way (fault kill_render)")
         while True:
             if getattr(self, "cancel_first", False):
                 self.cancel_first = False
@@ -820,17 +825,35 @@ def review(run, an, m, mp4):
         return sess
     jdump(m["plan"], os.path.join(wd, "plan.json"))
     shutil.copy(os.path.join(run.state, "analysis.json"), os.path.join(wd, "analysis.json"))
-    r = subprocess.run([sys.executable, "-m", "polished.review", mp4, wd, "--brand", run.brand] + run.api_left_args(),
-                       cwd=ROOT, capture_output=True, text=True, encoding="utf-8")
-    print(r.stdout[-2500:], r.stderr[-1500:], flush=True)
-    calls = jload(os.path.join(wd, "review_calls.json"), []) or []
-    run.cost["api"] += sum(c.get("cost", 0) for c in calls)
-    if r.returncode == 3:
-        h = jload(os.path.join(wd, "review_hold.json"), {})
-        return {"verdict": "hold", "issues": [{"severity": "blocker", "what": h.get("why", "review held")}]}
-    if r.returncode:
-        return {"verdict": "hold", "issues": [{"severity": "blocker", "what": "review crashed rc %d" % r.returncode}]}
-    res = jload(os.path.join(wd, "review.json"), {})
+
+    def one_look(temp):
+        r = subprocess.run([sys.executable, "-m", "polished.review", mp4, wd, "--brand", run.brand,
+                            "--temperature", str(temp)] + run.api_left_args(),
+                           cwd=ROOT, capture_output=True, text=True, encoding="utf-8")
+        print(r.stdout[-2500:], r.stderr[-1500:], flush=True)
+        calls = jload(os.path.join(wd, "review_calls.json"), []) or []
+        run.cost["api"] += sum(c.get("cost", 0) for c in calls)
+        if r.returncode == 3:
+            h = jload(os.path.join(wd, "review_hold.json"), {})
+            return {"verdict": "hold", "issues": [{"severity": "blocker", "what": h.get("why", "review held")}]}
+        if r.returncode:
+            return {"verdict": "hold", "issues": [{"severity": "blocker", "what": "review crashed rc %d" % r.returncode}]}
+        return jload(os.path.join(wd, "review.json"), {})
+
+    # 13 Nov fault QA: the SAME cut passed at 22:22 and failed at 03:40 (reviewer variance). First look at
+    # temperature 0; a fail gets two more independent looks and HOLDS only if 2 of the 3 fail.
+    res = one_look(0.0)
+    if res.get("verdict") == "fail":
+        looks = [res] + [one_look(1.0) for _ in range(2)]
+        fails = [x for x in looks if x.get("verdict") != "pass"]
+        if len(fails) >= 2:
+            res = dict(fails[0], looks=[x.get("verdict") for x in looks])
+        else:
+            res = dict(next(x for x in looks if x.get("verdict") == "pass"), looks=[x.get("verdict") for x in looks],
+                       overruled=[i.get("what") for i in res.get("issues", []) if i.get("severity") == "blocker"])
+        log("  review second look: %s -> %s" % (res["looks"], res.get("verdict")))
+    if res.get("verdict") == "hold":
+        return res
     res["mp4_size"] = os.path.getsize(mp4)
     res["prompt_sha"] = psha
     jdump(res, os.path.join(wd, "review.json"))

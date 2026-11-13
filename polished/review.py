@@ -86,6 +86,7 @@ def main():
     ap.add_argument("--brand", default="")
     ap.add_argument("--budget-limit", type=float, default=0.0)
     ap.add_argument("--budget-spent", type=float, default=0.0)
+    ap.add_argument("--temperature", type=float, default=0.0)   # 13 Nov: same cut passed at 22:22, failed at 03:40
     a = ap.parse_args()
     plan = json.load(open(os.path.join(a.work, "plan.json"), encoding="utf-8"))
     an = json.load(open(os.path.join(a.work, "analysis.json"), encoding="utf-8"))
@@ -137,7 +138,8 @@ def main():
     of = os.path.join(a.work, "review_llm.json")
     bud = llm.Budget(a.budget_limit, a.budget_spent)
     try:   # Haiku needs 4000 output tokens: it reasons first, and 1500 cut its answer off (10-30)
-        raw, c_ = bud.call("gta6-review-episode", prompt, model=a.model, max_tokens=4000, images=imgs)
+        raw, c_ = bud.call("gta6-review-episode", prompt, model=a.model, max_tokens=4000, images=imgs,
+                           temperature=a.temperature)
     except llm.Dry as ex:
         json.dump({"why": str(ex)}, open(os.path.join(a.work, "review_hold.json"), "w", encoding="utf-8"))
         print("HOLD: %s" % ex)

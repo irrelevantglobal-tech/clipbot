@@ -41,7 +41,7 @@ class Budget:
     def left(self):
         return self.limit - self.spent
 
-    def call(self, task, prompt, model="sonnet", max_tokens=5000, effort="low", images=()):
+    def call(self, task, prompt, model="sonnet", max_tokens=5000, effort="low", images=(), temperature=None):
         """-> (text, cost). Raises Dry before spending anything it might not be able to pay for."""
         m = MODELS[model]
         worst = ((len(prompt) + 2000 * len(images)) * m.get("longIn", m["in"]) + max_tokens * m.get("longOut", m["out"])) / 1e6
@@ -55,6 +55,8 @@ class Budget:
         content.append({"type": "text", "text": prompt})
         body = {"model": m["id"], "max_tokens": max_tokens, "output_config": {"effort": effort},
                 "messages": [{"role": "user", "content": content}]}
+        if temperature is not None:
+            body["temperature"] = temperature
         hdr = {"x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json"}
         if m["fallbacks"]:
             body["fallbacks"] = "default"
@@ -78,6 +80,9 @@ class Budget:
                 txt = e.read().decode("utf-8", "replace")[:400]
                 if "credit balance" in txt.lower():
                     raise Dry(f"{task}: the API account says the credit is gone ({txt[:160]})")
+                if e.code == 400 and "temperature" in body and "temperature" in txt.lower():
+                    body = {k2: v for k2, v in body.items() if k2 != "temperature"}
+                    continue
                 if e.code == 400 and "fallbacks" in body and "fallback" in txt.lower():
                     body = {k2: v for k2, v in body.items() if k2 != "fallbacks"}
                     hdr = {k2: v for k2, v in hdr.items() if k2 != "anthropic-beta"}

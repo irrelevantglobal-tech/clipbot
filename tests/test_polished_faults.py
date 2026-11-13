@@ -323,3 +323,40 @@ class RenderRetry(unittest.TestCase):
         with contextlib.redirect_stdout(io.StringIO()):
             with self.assertRaisesRegex(RuntimeError, "still lost"):
                 lane._render_one("1", {}, "t", {}, "k")
+
+
+class ReviewSecondLook(unittest.TestCase):
+    """13 Nov: the same cut passed at 22:22 and failed at 03:40. A fail gets two more looks; 2 of 3 must fail."""
+
+    def run_review(self, verdicts):
+        d = tempfile.mkdtemp()
+        state = os.path.join(d, "state")
+        os.makedirs(state)
+        json.dump({}, open(os.path.join(state, "analysis.json"), "w"))
+        mp4 = os.path.join(d, "e.mp4")
+        open(mp4, "wb").write(b"x" * 10)
+        run = C.Run(SimpleNamespace(state=state, out=os.path.join(d, "o"), lane="modal", answers=""))
+        run.brand = "OwnerBrand"
+        seq = iter(verdicts)
+
+        def fake(cmd, **kw):
+            wd = cmd[cmd.index("polished.review") + 2]
+            v = next(seq)
+            json.dump({"verdict": v, "issues": [{"severity": "blocker", "what": "card"}] if v == "fail" else []},
+                      open(os.path.join(wd, "review.json"), "w"))
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+        with mock.patch.object(C.subprocess, "run", side_effect=fake), contextlib.redirect_stdout(io.StringIO()):
+            return C.review(run, {}, {"marker": "clipbot:ep:1:0", "plan": {}}, mp4)
+
+    def test_pass_first_time_is_one_call(self):
+        self.assertEqual(self.run_review(["pass"])["verdict"], "pass")
+
+    def test_one_stray_fail_is_overruled(self):
+        r = self.run_review(["fail", "pass", "pass"])
+        self.assertEqual(r["verdict"], "pass")
+        self.assertEqual(r["looks"], ["fail", "pass", "pass"])
+        self.assertEqual(r["overruled"], ["card"])
+
+    def test_two_fails_hold(self):
+        r = self.run_review(["fail", "pass", "fail"])
+        self.assertEqual(r["verdict"], "fail")
