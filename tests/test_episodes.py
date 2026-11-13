@@ -318,5 +318,40 @@ class Scheduling(unittest.TestCase):
                 put.assert_not_called()
 
 
+class PublishRepairs(unittest.TestCase):
+    """QA big sweep 13 Nov."""
+
+    def base(self, status):
+        return {"snippet": {"channelId": common.CHANNEL_ID, "description": "x clipbot:ep:1:0", "title": "t", "categoryId": "20"},
+                "status": status, "contentDetails": {}}
+
+    def test_a_long_dash_in_the_hook_is_scheduled_not_refused(self):
+        it = ep("1", 0, "approved", marker="clipbot:ep:1:0", hook="Fire Truck — Heist")
+        calls = []
+
+        def yt(kind, **kw):
+            if kind == "videos" and kw.get("part") == "status":
+                return {"items": [{"status": {"publishAt": "2026-11-20T12:00:00Z"}}]}
+            return {"items": [self.base({"privacyStatus": "private"})]}
+        with mock.patch.object(common, "yt", side_effect=yt), mock.patch.object(common, "yt_token", return_value="t"),              mock.patch.object(common, "http", side_effect=lambda *a, **k: calls.append(a)),              mock.patch.object(P, "thumbnail"), contextlib.redirect_stdout(io.StringIO()):
+            _, title = P.schedule(it, 1, at(2026, 11, 20, 12), "", False)
+        self.assertNotIn("—", title)
+        self.assertIn("Fire Truck, Heist", title)
+        self.assertEqual(len(calls), 1)                                   # the PUT went out
+
+    def test_rerun_after_a_failed_playlist_step_still_adds_it(self):
+        it = ep("1", 0, "approved", marker="clipbot:ep:1:0")
+        calls = []
+
+        def yt(kind, **kw):
+            if kind == "playlistItems":
+                return {"items": []}
+            return {"items": [self.base({"privacyStatus": "private", "publishAt": "2026-11-20T12:00:00Z"})]}
+        with mock.patch.object(common, "yt", side_effect=yt), mock.patch.object(common, "yt_token", return_value="t"),              mock.patch.object(common, "http", side_effect=lambda *a, **k: calls.append(a)),              contextlib.redirect_stdout(io.StringIO()):
+            P.schedule(it, 1, at(2026, 11, 20, 12), "PLx", False)
+        self.assertEqual(len(calls), 1)
+        self.assertIn("playlistItems", calls[0][0])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -450,3 +450,42 @@ class Asleep(unittest.TestCase):
     def test_vod_start_with_no_words(self):
         r, tail = self.run_one(synth(4 * 3600, away=[(0, 4 * 3600)]), "--vod-start")
         self.assertEqual(r.returncode, 2, r.stdout[-400:] + r.stderr[-400:])
+
+
+class CopyRules(unittest.TestCase):
+    """QA big sweep 13 Nov: the model's copy broke a rule. The planner used to ABORT the window (and B3 replays the
+    same saved answer, so it died 3 times and 4 h were skipped); a long dash in the TITLE got through to publish,
+    where check_meta refused it and that Part and every later one stayed unscheduled."""
+
+    def setUp(self):
+        self.d = tempfile.mkdtemp()
+
+    def tearDown(self):
+        shutil.rmtree(self.d, ignore_errors=True)
+
+    def run_answer(self, answer):
+        ap = os.path.join(self.d, "an.json")
+        with open(ap, "w") as f:
+            json.dump(synth(3600), f)
+        af = os.path.join(self.d, "answer.json")
+        with open(af, "w", encoding="utf-8") as f:
+            json.dump(answer, f, ensure_ascii=False)
+        w = os.path.join(self.d, "w")
+        r = plan(ap, w, "--reuse-llm", af, "--start", "0", "--final")
+        self.assertEqual(r.returncode, 0, r.stdout[-600:] + r.stderr[-600:])
+        with open(os.path.join(w, "plan.json"), encoding="utf-8") as f:
+            return json.load(f)
+
+    def test_banned_phrase_drops_the_sentence_not_the_window(self):
+        p = self.run_answer({"title": "Fire Truck Heist",
+                             "description": "Part 3. I swear the truck was on fire. We rob the bank anyway. Mild language."})
+        self.assertIn("We rob the bank anyway.", p["description"])
+        for bad in ("swear", "language"):
+            self.assertNotIn(bad, p["description"].lower())
+        self.assertTrue(any("sentence was dropped" in x for x in p["stats"]["problems"]))
+
+    def test_long_dash_in_the_title_is_plain_before_publish(self):
+        p = self.run_answer({"title": "Fire Truck — Heist – Night", "description": "Part 3. A long night."})
+        self.assertNotIn("—", p["title"] + p["youtube_title"])
+        self.assertNotIn("–", p["title"] + p["youtube_title"])
+        self.assertIn("Fire Truck, Heist - Night", p["youtube_title"])

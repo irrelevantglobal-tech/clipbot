@@ -118,9 +118,18 @@ def schedule(it, part, slot, playlist, dry):
         raise RuntimeError(f"{vid} is {st.get('privacyStatus')}, not private; refusing to schedule it")
     if st.get("publishAt"):
         print(f"  {vid} already has publishAt {st['publishAt']}; reporting it, not changing it")
+        # a run that died after the PUT (playlist call, thumbnail) left the Part out of the playlist:
+        # adding it is the one idempotent step to finish here (the thumbnail stays YouTube's frame)
+        if playlist and not dry:
+            try:
+                add_to_playlist(vid, playlist)
+            except Exception as e:
+                print(f"  playlist add on a re-run failed ({str(e)[:120]}); the Part is scheduled anyway")
         return parse(st["publishAt"]), cur["snippet"]["title"]
     series = it.get("series") or "GTA 6"
-    title = episodes.title_for(series, part, it["hook"])
+    # the hook is the planner's or a crew edit from the Discord card: neither path stops a long dash,
+    # and check_meta below would refuse it (then this Part and every later one stay unscheduled)
+    title = episodes.title_for(series, part, episodes.plain_dashes(it["hook"] or ""))
     desc = episodes.description_for(it.get("description") or "", it.get("hashtags") or [], it["marker"])
     # polished episodes are planned before their Part number exists: the planner writes this token
     desc = desc.replace("Part {PART}.", f"Part {part}.")
@@ -146,15 +155,19 @@ def schedule(it, part, slot, playlist, dry):
     else:
         raise RuntimeError(f"{vid} shows no publishAt after scheduling; check it before rerunning")
     if playlist:
-        have = common.yt("playlistItems", part="id", playlistId=playlist, videoId=vid).get("items", [])
-        if not have:
-            common.http("https://www.googleapis.com/youtube/v3/playlistItems?part=snippet",
-                        {"snippet": {"playlistId": playlist, "resourceId": {"kind": "youtube#video", "videoId": vid}}},
-                        headers={"Authorization": "Bearer " + common.yt_token()})
+        add_to_playlist(vid, playlist)
     else:
         print("  EP_PLAYLIST not set: playlist step skipped")
     thumbnail(it, part, series, vid)
     return slot, title
+
+
+def add_to_playlist(vid, playlist):
+    have = common.yt("playlistItems", part="id", playlistId=playlist, videoId=vid).get("items", [])
+    if not have:
+        common.http("https://www.googleapis.com/youtube/v3/playlistItems?part=snippet",
+                    {"snippet": {"playlistId": playlist, "resourceId": {"kind": "youtube#video", "videoId": vid}}},
+                    headers={"Authorization": "Bearer " + common.yt_token()})
 
 
 def thumbnail(it, part, series, vid):

@@ -751,7 +751,9 @@ def main():
                 clean.append([round(float(t), 1), text_between(src_s, src_s + 15)[:40] or "Part %d" % (len(clean) + 1)])
         clean.sort()
 
-    title_core = str(choice.get("title") or "").strip()
+    # same dash rule as the description: an em dash in the title is refused at publish (check_meta),
+    # which would leave the approved Part, and every Part after it, unscheduled
+    title_core = re.sub(r" ?— ?", ", ", str(choice.get("title") or "")).replace("–", "-").strip()
     title = "%s Part N - %s%s" % (a.game, title_core, SUFFIX)
     if len(title) > 97:   # "Part N" can become "Part 120"
         problems.append("title too long (%d), trimmed to the core" % len(title))
@@ -760,10 +762,17 @@ def main():
     desc = str(choice.get("description") or "Part {PART}.").replace("\u2014", ",").replace("\u2013", "-").strip()
     if not desc.startswith("Part {PART}."):
         desc = "Part {PART}. " + re.sub(r"^Part\s+\S+\.\s*", "", desc)
+    # A banned phrase in the model's copy drops that SENTENCE, never the window: an abort here replays the
+    # same saved answer on every retry (B3), so one "I swear it was on fire" would skip 4 h of episodes.
     for bad, rx in (("kick link", r"kick\.com"), ("language warning", r"language|swear|profanity"),
                     ("part count", r"\bof \d+ parts?\b|\d+ parts? (in total|total)")):
         if re.search(rx, desc, re.I):
-            sys.exit("ABORT: description breaks the '%s' rule" % bad)
+            body = desc[len("Part {PART}."):].strip()
+            kept = [s for s in re.split(r"(?<=[.!?])\s+", body) if s and not re.search(rx, s, re.I)]
+            desc = ("Part {PART}. " + " ".join(kept)).strip()
+            problems.append("description broke the '%s' rule: that sentence was dropped" % bad)
+    if re.search(r"kick\.com|language|swear|profanity|\bof \d+ parts?\b|\d+ parts? (in total|total)", desc, re.I):
+        desc = "Part {PART}."   # whatever is left still breaks a rule: ship the bare line, never the phrase
     chapter_block = "\n".join("%s %s" % (mmss(t), lab) for t, lab in clean)
     full_desc = desc + "\n\n" + chapter_block      # ep_publish adds the footer (handles) + marker
     if len(full_desc) > 4300:
