@@ -67,8 +67,9 @@ jobs:
       YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
       YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
       YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
-      MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
-      MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+      # modal_down drill (dry runs only): every Modal call in the job is refused, as if Modal were capped or down
+      MODAL_TOKEN_ID: ${{ (contains(inputs.faults, 'modal_down') && !inputs.upload) && 'ak-modal-down-drill' || secrets.MODAL_TOKEN_ID }}
+      MODAL_TOKEN_SECRET: ${{ (contains(inputs.faults, 'modal_down') && !inputs.upload) && 'as-modal-down-drill' || secrets.MODAL_TOKEN_SECRET }}
       GTA6_ANTHROPIC_KEY: ${{ secrets.GTA6_ANTHROPIC_KEY }}
       VAST_API_KEY: ${{ secrets.VAST_API_KEY }}
       GTA6_API_BUDGET: ${{ vars.GTA6_API_BUDGET }}
@@ -124,9 +125,12 @@ jobs:
         env:
           CAMP_ASSETS_URL: ${{ secrets.CAMP_ASSETS_URL }}
           CAMP_ASSETS_TOKEN: ${{ secrets.CAMP_ASSETS_TOKEN }}
-        run: python -m polished.brand.camp_fetch
+          CAMP_MEDIA_DEPLOY_KEY: ${{ secrets.CAMP_MEDIA_DEPLOY_KEY }}   # read-only key to the private media repo
+        run: python -m polished.brand.camp_fetch     # private GitHub copy first, Modal volume second
       - name: Deploy the GPU app (lane 1)
+        id: deploy
         if: env.MODAL_TOKEN_ID != ''
+        continue-on-error: true      # Modal capped or down must not stop the window: the conductor picks Vast
         run: modal deploy polished/modal_app.py
       - name: Lane 4 answers
         if: inputs.answers != ''
@@ -134,6 +138,8 @@ jobs:
           ANSWERS: ${{ inputs.answers }}
         run: printf '%s' "$ANSWERS" | base64 -d | openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -pass env:CLIPBOT_ZIP_KEY | gunzip > answers.json
       - name: Polish the window
+        env:
+          MODAL_DEPLOYED: ${{ steps.deploy.outcome }}
         run: |
           args=(--vod "$VOD" --from "$FROM" --to "$TO" --series "$SERIES" --lane "$LANE" --max-episodes "$MAXEP" --keep "$KEEP" --state state --out out)
           [[ "${{ inputs.final }}" == "true" ]] && args+=(--final)

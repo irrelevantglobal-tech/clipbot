@@ -60,6 +60,7 @@ FAULT_HELP = {
     "all_lanes_out": "modal_at_cap + vast_zero: HOLD + phone ping",
     "kill_render": "the first Modal render is cancelled mid-way: the window dies, nothing partial is kept",
     "client_dies": "this Actions client exits hard while renders run (exit 137)",
+    "modal_down": "workflow: every Modal call refused (bad token): the media comes from the private GitHub copy and the window runs on Vast",
     "stall": "no board update for POLISHED_STALL_MIN (default 30) min while RUNNING: the watchdog must post stuck",
     "fail_window": "the window fails on purpose (3 in a row = the worker steps over it)",
     "no_1080": "the VOD is treated as having no 1920x1080 rendition: hard refuse before any GPU spend",
@@ -120,7 +121,9 @@ class Run:
     def pick_lane(self, stream_h):
         want = self.a.lane
         why = []
-        if want in ("auto", "modal") and os.environ.get("MODAL_TOKEN_ID"):
+        if want in ("auto", "modal") and os.environ.get("MODAL_DEPLOYED", "success") not in ("success", "skipped", ""):
+            why.append("the Modal app could not be deployed (%s: capped or down)" % os.environ.get("MODAL_DEPLOYED"))
+        elif want in ("auto", "modal") and os.environ.get("MODAL_TOKEN_ID"):
             try:
                 self.modal_spent0 = ledger.modal_spent()
                 est = stream_h * EST_PER_STREAM_H["modal"]
@@ -485,6 +488,8 @@ class LocalLane:
         from polished import backlog
         if backlog.obs_live() and os.environ.get("POLISHED_ALLOW_WHILE_LIVE") != "1":
             raise Hold("laptop lane refused: OBS is running (never render while live without a passed load test + OK)")
+        from polished.brand import camp_fetch
+        camp_fetch.ensure()          # the stings' media: private GitHub copy (this machine's gh login), then Modal
         self.run = run
 
     def analyze_many(self, vod, todo):

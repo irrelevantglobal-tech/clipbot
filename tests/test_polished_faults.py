@@ -360,3 +360,36 @@ class ReviewSecondLook(unittest.TestCase):
     def test_two_fails_hold(self):
         r = self.run_review(["fail", "pass", "fail"])
         self.assertEqual(r["verdict"], "fail")
+
+
+class StingMediaSources(unittest.TestCase):
+    """13 Nov (owner: "we NEEEED to fix this"): a capped/unreachable Modal must not stop the media fetch."""
+
+    def test_default_order_puts_the_modal_free_copy_first(self):
+        from polished.brand import camp_fetch as cf
+        with mock.patch.dict(os.environ, {"CAMP_ASSETS_SOURCES": "", "CAMP_ASSETS_URL": "modal-volume://sting-media"}):
+            src = cf.sources()
+        self.assertTrue(src[0].startswith("github://"))
+        self.assertIn("modal-volume://sting-media", src)
+
+    def test_first_source_failing_falls_through_to_the_next(self):
+        from polished.brand import camp_fetch as cf
+        state = {"missing": ["a.mp4"]}
+
+        def one(assets, base, token, todo):
+            if base.startswith("modal"):
+                raise RuntimeError("Modal refused")
+            state["missing"] = []
+            return len(todo)
+        with mock.patch.object(cf, "missing", side_effect=lambda *a: list(state["missing"])), \
+                mock.patch.object(cf, "_ensure_one", side_effect=one), contextlib.redirect_stdout(io.StringIO()), \
+                mock.patch.dict(os.environ, {"CAMP_ASSETS_SOURCES": "modal-volume://x,github://o/r@main", "CAMP_ASSETS_URL": ""}):
+            self.assertEqual(cf.ensure(assets="unused"), 1)
+
+    def test_every_source_failing_stops(self):
+        from polished.brand import camp_fetch as cf
+        with mock.patch.object(cf, "missing", return_value=["a.mp4"]), \
+                mock.patch.object(cf, "_ensure_one", side_effect=RuntimeError("down")), contextlib.redirect_stdout(io.StringIO()), \
+                mock.patch.dict(os.environ, {"CAMP_ASSETS_SOURCES": "modal-volume://x,github://o/r@main", "CAMP_ASSETS_URL": ""}):
+            with self.assertRaisesRegex(SystemExit, "still missing after every source"):
+                cf.ensure(assets="unused")
