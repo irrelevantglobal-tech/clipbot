@@ -171,6 +171,17 @@ class Choose(unittest.TestCase):
         cs = [{**c, "score": 4.0} for c in self.cands()]
         self.assertEqual(self.run_choose({0: self.v(2), 1: self.v(1), 2: self.v(9, who="game"), 3: self.v(8, kind="sponsor")}, cs), [])
 
+    def test_every_candidate_records_why(self):
+        # a 0-pick window must be auditable: each stretch says why it was not offered (manifest "considered")
+        cs = self.cands()
+        self.run_choose({0: self.v(8), 1: self.v(1), 2: self.v(9, who="game")}, cs)
+        rows = f.considered(cs, 3600)
+        self.assertEqual([r["why"] for r in rows],
+                         ["cleared the bar", "below the floor 2.5", "vetoed (game, reaction)", "not judged"])
+        self.assertEqual(rows[0]["start"], 4596)                 # the snapped cut (setup phrase at 996 s) + base
+        self.assertEqual(rows[0]["judge"], 8)
+        self.assertNotIn("judge", rows[3])
+
     def test_cut_is_snapped_and_text_follows_the_cut(self):
         out = self.run_choose({0: self.v(9, bounds=(1001.5, 1012.0))}, [self.cands()[0]])
         c = out[0][0]

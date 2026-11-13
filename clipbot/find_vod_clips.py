@@ -365,11 +365,15 @@ def choose(cands, wav, dur, stream_title, n_pick, words, ask=None):
     def take(c, s, e, ws, title):
         if any(s < o["e"] + 5 and e > o["s"] - 5 for o, _ in out):
             return False
-        c.update(s=s, e=e, text=text_between(ws, s, e))
+        c.update(s=s, e=e, text=text_between(ws, s, e), why="cleared the bar")
         out.append((c, title))
         return True
 
     if judged:
+        for c in cands:                              # recorded in the manifest, so a 0-pick window can be audited
+            v = c.get("judge")
+            c["why"] = ("not judged" if not v else f"vetoed ({v['who']}, {v['kind']})" if judge.vetoed(v)
+                        else f"below the floor {judge.FLOOR}" if judge.rank(c) < judge.FLOOR else "overlaps a better pick")
         pool = [c for c in cands if c.get("judge") and not judge.vetoed(c["judge"]) and judge.rank(c) >= judge.FLOOR]
         pool.sort(key=lambda c: -judge.rank(c))
         for c in pool:
@@ -387,6 +391,8 @@ def choose(cands, wav, dur, stream_title, n_pick, words, ask=None):
         return out
     # judge down: the old AI ranker, only over stretches above the heuristic floor
     strong = [c for c in cands if c["score"] >= judge.FALLBACK_FLOOR or chat.boost(*c.get("chat", (0, 0))) >= 0.8]
+    for c in cands:
+        c["why"] = "overlaps a better pick" if c in strong else f"no judge, below the heuristic floor {judge.FALLBACK_FLOOR}"
     print(f"no judge: {len(strong)} of {len(cands)} candidates clear the heuristic floor {judge.FALLBACK_FLOOR}")
     if not strong:
         return out
@@ -396,6 +402,19 @@ def choose(cands, wav, dur, stream_title, n_pick, words, ask=None):
         c = strong[i]
         ws = c.get("words") or words
         take(c, *snap(ws, c["s"], c["e"], dur), ws, title)
+    return out
+
+
+def considered(cands, base):
+    """Every shortlisted stretch with its signals and why it was or was not offered: proof that an empty window is
+    a quiet stretch, not a broken stage, and the data to re-tune the floor from his later approvals."""
+    out = []
+    for c in cands:
+        v = c.get("judge") or {}
+        out.append({"start": round(c["s"] + base), "end": round(c["e"] + base), "score": c["score"],
+                    **({"judge": v["score"], "who": v["who"], "kind": v["kind"]} if v else {}),
+                    "chat": list(c.get("chat") or (0, 0)), "rank": round(judge.rank(c), 2),
+                    "why": c.get("why", "not tried"), "text": (c.get("text") or "")[:160]})
     return out
 
 
@@ -500,6 +519,7 @@ def main():
             print(f"REFUSED {c['s'] + base:.0f}-{c['e'] + base:.0f}s: the footage does not say what the transcript said "
                   f"there (match {r}). Not offered.")
             refused.append(round(c["s"] + base))
+            c["why"] = f"footage did not match the transcript ({r})"
             os.remove(tmp)
             continue
         still = stillness(tmp)
@@ -508,9 +528,11 @@ def main():
             print(f"SKIPPED {c['s'] + base:.0f}-{c['e'] + base:.0f}s: the picture is a static screen ({still:.0%} frozen: "
                   "menu, map, inventory or pause). Trying the next one.")
             static.append(round(c["s"] + base))
+            c["why"] = f"static screen ({still:.0%} frozen)"
             os.remove(tmp)
             continue
         shutil.move(tmp, raw)
+        c["why"] = "offered"
         picked += 0 if marked_one else 1
         title = title or quote_title(c["text"])
         info = render.render(raw, os.path.join(a.out, f"clip{n}.mp4"), os.path.join(a.out, f"preview{n}.mp4"), hook=title,
@@ -531,7 +553,8 @@ def main():
 
     json.dump({"vod": a.vod, "batch": batch, "window": [base, base + dur] if windowed else None, "kind": "vod",
                "vod_title": v["title"], "vod_created": v["created_at"], "clips": clips,
-               **({"refused": refused} if refused else {}), **({"static": static} if static else {})},
+               **({"refused": refused} if refused else {}), **({"static": static} if static else {}),
+               "considered": considered(cands, base)},
               open(os.path.join(a.out, "manifest.json"), "w", encoding="utf-8"), ensure_ascii=False, indent=1)
     os.remove(wav)
     print(f"manifest written: {len(clips)} clip(s)" + ("" if clips else ", nothing in this stretch cleared the bar"))
