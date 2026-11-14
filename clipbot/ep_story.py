@@ -6,6 +6,7 @@
 
 Owner 2026-11-14: "an instagram story uploaded when new episodes go out too? like the thumbnail and something saying
 new episode go check it out". Runs in the hourly Instagram job, only when the repo variable EP_STORY is "1".
+Also posts each one to X (text + YouTube link) through Buffer, remembered apart (lane=x).
 Work list: our own recent uploads, long-form (> 3 min), PUBLIC, made public in the last FRESH hours (so switching it
 on never posts a backlog), not sponsored. Done list: the worker's KV (/clipbot/epstory), checked first, written
 right after posting. The API cannot add a link sticker, so the card says LINK IN BIO.
@@ -92,30 +93,66 @@ def main():
         return
     dry = os.environ.get("EPS_DRY") == "1"
     eps = new_episodes(common.recent_uploads(25))
-    done = set(common.worker("/clipbot/epstory").get("ids", []))
-    todo = [v for v in eps if v["id"] not in done]
-    print(f"{len(eps)} episodes public in the last {FRESH.seconds // 3600} h, {len(todo)} without a Story yet")
-    if not todo:
-        return
+    print(f"{len(eps)} episodes public in the last {FRESH.seconds // 3600} h")
+    failed = []
+    for lane, fn in (("ig", instagram_lane), ("x", x_lane)):
+        done = set(common.worker("/clipbot/epstory" + ("?lane=x" if lane == "x" else "")).get("ids", []))
+        todo = [v for v in eps if v["id"] not in done]
+        if not todo:
+            continue
+        try:
+            fn(todo[:MAX_PER_RUN], dry)
+        except Exception as e:
+            print(f"{lane}: FAILED {str(e)[:300]}")
+            failed.append(lane)
+            common.worker("/clipbot/failed", {"id": f"Episode {'Story' if lane == 'ig' else 'X post'}", "error": str(e)[:300]})
+    if failed:
+        raise SystemExit(1)
+
+
+def instagram_lane(todo, dry):
     tok = instagram.login()
     work = os.path.abspath("work")
     os.makedirs(work, exist_ok=True)
-    for v in todo[:MAX_PER_RUN]:
+    for v in todo:
         title = v["snippet"]["title"]
-        try:
-            legacy.check(title, where=v["id"])
-            path = render(v, os.path.join(work, f"story-{v['id']}.jpg"))
-            sid = post_story(tok, path, dry)
-            if sid is None:
-                print(f"{v['id']}: DRY, Story container FINISHED, not published ({title})")
-                continue
-            common.worker("/clipbot/epstory", {"id": v["id"], "story": sid})
-            print(f"{v['id']}: Story {sid} for '{title}'")
-        except Exception as e:
-            print(f"{v['id']}: FAILED {str(e)[:300]}")
-            common.worker("/clipbot/failed", {"id": f"Episode Story {v['id']}", "error": f"'{title[:80]}': {str(e)[:220]}"})
-            raise SystemExit(1)
+        legacy.check(title, where=v["id"])
+        sid = post_story(tok, render(v, os.path.join(work, f"story-{v['id']}.jpg")), dry)
+        if sid is None:
+            print(f"{v['id']}: DRY, Story container FINISHED, not published ({title})")
+            continue
+        common.worker("/clipbot/epstory", {"id": v["id"], "story": sid})
+        print(f"{v['id']}: Story {sid} for '{title}'")
 
+
+def x_text(v):
+    return f"New episode: {v['snippet']['title']}\n\nhttps://youtu.be/{v['id']}"
+
+
+def x_lane(todo, dry):
+    """Owner 2026-11-14: new episodes on X too. Text + the YouTube link (X shows the video card). Buffer's own recent
+    posts are checked for the link first, so a lost worker write never posts twice."""
+    from . import x
+    key = os.environ.get("BUFFER_API_KEY", "")
+    if not key:
+        print("X: no Buffer key, skipped")
+        return
+    org, chan = x.x_channel(key)
+    posts = x.recent_posts(key, org, chan["id"])
+    for v in todo:
+        text = x_text(v)
+        legacy.check(text, where=v["id"])
+        if any(f"youtu.be/{v['id']}" in (p.get("text") or "") for p in posts):
+            print(f"{v['id']}: already on X")
+            if not dry:
+                common.worker("/clipbot/epstory?lane=x", {"id": v["id"]})
+            continue
+        if dry:
+            print(f"{v['id']}: X DRY, not posted: {text!r}")
+            continue
+        pid = x.create(key, chan["id"], text)
+        common.worker("/clipbot/epstory?lane=x", {"id": v["id"], "story": pid})
+        print(f"{v['id']}: X post {pid} {x.wait_sent(key, pid) or '(sending)'}")
 
 if __name__ == "__main__":
     sys.exit(main())

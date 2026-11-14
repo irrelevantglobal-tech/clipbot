@@ -1,0 +1,35 @@
+# "I'm live" promo (owner 2026-11-14): an X post + an Instagram Story with the stream's preview frame.
+# Dispatched by the Forge worker on each go-live edge (at most once per 3 h); run by hand with dry=1 to test.
+name: golive
+on:
+  workflow_dispatch:
+    inputs:
+      dry:
+        description: "1 = render + Instagram processes the Story; nothing published"
+        default: "0"
+concurrency:
+  group: golive
+  cancel-in-progress: false
+permissions:
+  contents: read
+jobs:
+  golive:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      CLIPBOT_TOKEN: ${{ secrets.CLIPBOT_TOKEN }}
+      CLIPBOT_ID: ${{ secrets.CLIPBOT_ID }}   # channel identity (names live only in this secret: the repo is public)
+      CLIPBOT_WORKER: ${{ secrets.CLIPBOT_WORKER }}
+      TWITCH_CLIENT_ID: ${{ secrets.TWITCH_CLIENT_ID }}
+      TWITCH_CLIENT_SECRET: ${{ secrets.TWITCH_CLIENT_SECRET }}
+      BUFFER_API_KEY: ${{ secrets.BUFFER_API_KEY }}
+      GOLIVE_DRY: ${{ inputs.dry || '0' }}
+      PYTHONUNBUFFERED: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -q Pillow   # only the card renderer: go-live should post fast
+      - name: Post
+        run: python -m clipbot.golive

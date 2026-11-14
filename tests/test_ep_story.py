@@ -35,5 +35,24 @@ class Pick(unittest.TestCase):
         self.assertEqual(Image.open(out).size, (1080, 1920))
 
 
+class Promo(unittest.TestCase):
+    def test_x_texts(self):
+        from clipbot import golive
+        v = up("kckE6lelQmg", 1, title="AC Rogue Part 6 - Get In The Coffin | Brand")
+        self.assertEqual(ep_story.x_text(v), "New episode: AC Rogue Part 6 - Get In The Coffin | Brand\n\nhttps://youtu.be/kckE6lelQmg")
+        self.assertEqual(golive.short_title("GTA 6 LAUNCH MARATHON | DAY 2 | !discord !merch"), "GTA 6 LAUNCH MARATHON DAY 2")
+        self.assertEqual(golive.short_title("big heist night - !sub"), "big heist night")
+        self.assertTrue(golive.x_text("Vice City day 1 | !discord").startswith("LIVE NOW: Vice City day 1\n\nhttps://twitch.tv/"))
+
+    def test_live_card_fits(self):
+        from PIL import Image
+        from clipbot.style import gta_style
+        d = tempfile.mkdtemp()
+        out = os.path.join(d, "l.png")
+        gta_style.live_story(Image.new("RGB", (1280, 720), "#552244"), "GTA 6 LAUNCH MARATHON DAY 2 THE BIG ONE", out=out)
+        self.assertEqual(Image.open(out).size, (1080, 1920))
+        gta_style.live_story(Image.new("RGB", (1280, 720), "#552244"), "", out=out)
+
+
 if __name__ == "__main__":
     unittest.main()

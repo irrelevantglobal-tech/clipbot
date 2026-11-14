@@ -93,12 +93,14 @@ def already(posts, text):
     return next((p for p in posts if (p.get("text") or "").split("\n\n")[0].strip() == head), None)
 
 
-def create(key, chan, text, url):
-    q = """mutation($t: String!, $c: ChannelId!, $u: String!) {
-      createPost(input: {text: $t, channelId: $c, schedulingType: automatic, mode: shareNow, assets: [{video: {url: $u}}]}) {
+def create(key, chan, text, url=None, kind="video"):
+    """Post now. url = a public media URL (kind video or image); None = text only (X unfurls a link card)."""
+    q = """mutation($t: String!, $c: ChannelId!, $a: [AssetInput!]!) {
+      createPost(input: {text: $t, channelId: $c, schedulingType: automatic, mode: shareNow, assets: $a}) {
         ... on PostActionSuccess { post { id status } }
         ... on MutationError { message } } }"""
-    r = gql(key, q, {"t": text, "c": chan, "u": url}, retries=0)["createPost"]
+    assets = [{kind: {"url": url}}] if url else []
+    r = gql(key, q, {"t": text, "c": chan, "a": assets}, retries=0)["createPost"]
     if not r.get("post"):
         raise RuntimeError(f"Buffer refused the post: {r.get('message', r)}"[:300])
     return r["post"]["id"]

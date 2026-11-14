@@ -85,11 +85,12 @@ jobs:
           cache: pip
       - if: always() && vars.EP_STORY == '1' && steps.q.outputs.any != '1'
         run: pip install -q -r requirements.txt
-      - name: Episode Stories
+      - name: Episode Stories + X
         if: always() && vars.EP_STORY == '1'
         env:
           YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
           YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
           YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
+          BUFFER_API_KEY: ${{ secrets.BUFFER_API_KEY }}   # the same episodes to X
           EPS_DRY: ${{ inputs.dry || '0' }}
         run: python -m clipbot.ep_story
