@@ -1,0 +1,37 @@
+# Weekly "what worked" DM (owner 2026-11-14): Sundays 18:07 UTC. The Forge worker's backup timer starts it if
+# GitHub's schedule does not fire (schedules stopped firing reliably after the repo went public).
+name: digest
+on:
+  workflow_dispatch:
+    inputs:
+      dry:
+        description: "1 = print the message in the log, send nothing"
+        default: "0"
+  schedule:
+    - cron: "7 18 * * 0"
+concurrency:
+  group: digest
+  cancel-in-progress: false
+permissions:
+  contents: read
+jobs:
+  digest:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      CLIPBOT_TOKEN: ${{ secrets.CLIPBOT_TOKEN }}
+      CLIPBOT_ID: ${{ secrets.CLIPBOT_ID }}
+      CLIPBOT_WORKER: ${{ secrets.CLIPBOT_WORKER }}
+      YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
+      YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
+      YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
+      BUFFER_API_KEY: ${{ secrets.BUFFER_API_KEY }}
+      DIGEST_DRY: ${{ inputs.dry || '0' }}
+      PYTHONUNBUFFERED: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Send
+        run: python -m clipbot.digest
