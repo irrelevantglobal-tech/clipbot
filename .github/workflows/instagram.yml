@@ -77,3 +77,19 @@ jobs:
           BUFFER_API_KEY: ${{ secrets.BUFFER_API_KEY }}
           X_DRY: ${{ inputs.dry || '0' }}
         run: python -m clipbot.x
+      # Owner 2026-11-14: a Story on Instagram for each new episode once it is public. Off until vars.EP_STORY == '1'.
+      - uses: actions/setup-python@v5
+        if: always() && vars.EP_STORY == '1' && steps.q.outputs.any != '1'
+        with:
+          python-version: "3.12"
+          cache: pip
+      - if: always() && vars.EP_STORY == '1' && steps.q.outputs.any != '1'
+        run: pip install -q -r requirements.txt
+      - name: Episode Stories
+        if: always() && vars.EP_STORY == '1'
+        env:
+          YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
+          YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
+          YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
+          EPS_DRY: ${{ inputs.dry || '0' }}
+        run: python -m clipbot.ep_story

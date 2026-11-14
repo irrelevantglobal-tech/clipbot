@@ -546,6 +546,42 @@ def short_cover(frame, title, out=None, variant='sunset', seed=None, focus=(0.5,
     return _save(img, out, dict(k=k, lines=lines, dropped=dropped))
 
 
+def episode_story(thumb, out=None, seed=None, series=''):
+    """1080x1920 Instagram Story for a new episode (owner 2026-11-14: "the thumbnail and something saying new episode
+    go check it out"). The episode's own YouTube thumbnail is the hero; no tappable link via the API, so "LINK IN BIO".
+    Text stays out of Instagram's top bar (~250 px) and reply bar (~330 px)."""
+    W, H = 1080, 1920
+    seed = seed if seed is not None else 11
+    img = sunset_scene(W, H, 8, seed=seed, horizon=.8)
+    img.alpha_composite(grad(W, H, '#120a26', '#120a26', 150, 60))
+    k, lines, _ = _prep_title('NEW EPISODE', W - 160, 260, 16, 8, 1)
+    blk, pad = title_block(lines, k, 'sunset', align='center')
+    img.alpha_composite(blk, ((W - blk.width) // 2, 280 - pad))
+    y = 280 + blk.height - 2 * pad + 30
+    if series:
+        s = plate(series, 4, '#ffffff', INK, PINK)
+        if s.width <= W - 120:
+            img.alpha_composite(s, ((W - s.width) // 2, y))
+            y += s.height + 30
+    TW, TH = 960, 540
+    pic = cover_crop(_load(thumb), TW, TH).convert('RGBA')
+    tx, ty = (W - TW) // 2, y + 50
+    img.alpha_composite(neon_frame(TW + 80, TH + 80, 16, 6), (tx - 40, ty - 40))
+    img.alpha_composite(pic, (tx, ty))
+    y = ty + TH + 80
+    p = plate('OUT NOW ON YOUTUBE', 4, INK, CYAN, '#ffffff')
+    img.alpha_composite(p, ((W - p.width) // 2, y))
+    y += p.height + 30
+    t, _ = small_text('LINK IN BIO', 5, '#ffffff')
+    img.alpha_composite(t, ((W - t.width) // 2, y))
+    y += t.height + 24
+    bt, _ = small_text(BRAND, 3, SUN_TOP)
+    img.alpha_composite(bt, ((W - bt.width) // 2, y))
+    if y + bt.height > H - 330 or p.width > W - 40:
+        raise TextOverflow(f'story layout runs into the reply bar ({y + bt.height} px) or off the sides ({p.width} px)')
+    return _save(img, out, {})
+
+
 def _save(img, out, info):
     img = img.convert('RGB')
     if out:
