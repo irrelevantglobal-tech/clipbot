@@ -53,10 +53,13 @@ def x_count(now):
         return None
     from . import x
     org, chan = x.x_channel(key)
-    q = """query($o: OrganizationId!, $c: ChannelId!, $s: DateTime!) {
-      posts(first: 100, input: {organizationId: $o, filter: {channelIds: [$c], status: [sent], startDate: $s}}) { edges { node { id } } } }"""
-    since = (now - WEEK).strftime("%Y-%m-%dT%H:%M:%SZ")
-    return len(x.gql(key, q, {"o": org, "c": chan["id"], "s": since})["posts"]["edges"])
+    q = """query($o: OrganizationId!, $c: ChannelId!) {
+      posts(first: 100, input: {organizationId: $o, filter: {channelIds: [$c], status: [sent]},
+             sort: [{field: dueAt, direction: desc}]}) { edges { node { id sentAt dueAt } } } }"""
+    nodes = [e["node"] for e in x.gql(key, q, {"o": org, "c": chan["id"]})["posts"]["edges"]]
+    when = lambda p: datetime.fromisoformat((p.get("sentAt") or p.get("dueAt") or "1970-01-01T00:00:00Z").replace("Z", "+00:00"))
+    print(f"X: {len(nodes)} sent posts read")
+    return sum(1 for p in nodes if now - when(p) <= WEEK)
 
 
 def message(shorts, eps, reels, xs):
