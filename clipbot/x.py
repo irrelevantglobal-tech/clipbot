@@ -175,7 +175,7 @@ def main():
                 print(f"{it['id']}: DRY, not posted. {os.path.getsize(path) >> 20} MB, text={json.dumps(text, ensure_ascii=False)}")
                 continue
             parked = instagram.park(path)
-            pid = create(key, chan["id"], text, parked["url"])
+            pid = create(key, chan["id"], text, parked["url"] + ".mp4")   # Buffer reads the type from the URL
             posts.insert(0, {"id": pid, "text": text, "status": "sending"})
             posted += 1
             link = wait_sent(key, pid)
