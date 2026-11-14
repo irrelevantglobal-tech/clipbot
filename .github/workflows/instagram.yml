@@ -40,6 +40,13 @@ jobs:
           due = [i for i in q['items'] if datetime.datetime.fromisoformat(i['at'].replace('Z', '+00:00')) <= now]
           print(len(due) if q.get('login') else 0)")
           echo "due: $n"; echo "n=$n" >> "$GITHUB_OUTPUT"
+          x=$(curl -sf -A clipbot -H "Authorization: Bearer $CLIPBOT_TOKEN" $CLIPBOT_WORKER/clipbot/xqueue | python3 -c "
+          import sys, json, datetime
+          q = json.load(sys.stdin)
+          now = datetime.datetime.now(datetime.timezone.utc)
+          print(sum(datetime.datetime.fromisoformat(i['at'].replace('Z', '+00:00')) <= now for i in q['items']))") || x=0
+          echo "x due: $x"; echo "x=$x" >> "$GITHUB_OUTPUT"
+          echo "any=$([ "$n" != 0 ] || [ "$x" != 0 ] && echo 1 || echo 0)" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@v4
       # Owner 2026-10-31: our own comment on each ClipBot Short once it is public (stdlib only, no installs).
       # Never blocks the Reels.
@@ -52,14 +59,21 @@ jobs:
           YTC_DRY: ${{ inputs.dry || '0' }}
         run: python3 -m clipbot.yt_comments
       - uses: actions/setup-python@v5
-        if: steps.q.outputs.n != '0'
+        if: steps.q.outputs.any == '1'
         with:
           python-version: "3.12"
           cache: pip
-      - if: steps.q.outputs.n != '0'
+      - if: steps.q.outputs.any == '1'
         run: |
           for i in 1 2 3 4; do sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg && break; echo "apt failed ($i), retrying in 30 s"; sleep 30; done; command -v ffmpeg > /dev/null
           pip install -q -r requirements.txt
       - name: Post Reels
         if: steps.q.outputs.n != '0'
         run: python -m clipbot.instagram
+      # Owner 2026-11-14: the same clips on X, through Buffer's free plan. After the Reels so it never delays them.
+      - name: Post to X
+        if: always() && steps.q.outputs.x != '0' && steps.q.outputs.x != ''
+        env:
+          BUFFER_API_KEY: ${{ secrets.BUFFER_API_KEY }}
+          X_DRY: ${{ inputs.dry || '0' }}
+        run: python -m clipbot.x
