@@ -34,8 +34,13 @@ class LoginNeeded(Exception):
 
 
 def gql(key, query, variables=None, retries=2):
-    r = common.http(API, {"query": query, "variables": variables or {}}, retries=retries, timeout=90,
-                    headers={"Authorization": "Bearer " + key})
+    try:
+        r = common.http(API, {"query": query, "variables": variables or {}}, retries=retries, timeout=90,
+                        headers={"Authorization": "Bearer " + key})
+    except RuntimeError as e:
+        if "-> 401" in str(e) or "UNAUTHENTICATED" in str(e):
+            raise LoginNeeded("Buffer refused the API key (401)")
+        raise
     if r.get("errors"):
         msg = "; ".join(e.get("message", "") for e in r["errors"])[:300]
         if re.search(r"unauth|invalid.*(key|token)|forbidden", msg, re.I):
@@ -140,7 +145,9 @@ def main():
             raise LoginNeeded("the X queue is paused in Buffer")
         posts = recent_posts(key, org, chan["id"])
     except (LoginNeeded, RuntimeError) as e:
-        common.worker("/clipbot/failed", {"id": "X", "error": f"{str(e)[:220]}. Nothing was posted to X."})
+        fix = (" Copy a fresh key from Buffer (Settings > API), then double-click 'Set Buffer key from clipboard' on the Desktop."
+               if isinstance(e, LoginNeeded) else "")
+        common.worker("/clipbot/failed", {"id": "X", "error": f"{str(e)[:220]}. Nothing was posted to X.{fix}"})
         raise SystemExit(1)
     work = os.path.abspath("work")
     os.makedirs(work, exist_ok=True)
