@@ -232,6 +232,8 @@ def main():
             raise SystemExit(1)
         taken = {int(x.get("schedule_time") or 0): (x.get("desc") or "") for x in posts if int(x.get("schedule_time") or 0) > now.timestamp()}
         print(f"TikTok Studio: {len(posts)} posts read, {len(taken)} scheduled")
+        marathon = common.marathon_mode()                # hourly Shorts: the same 50 min spacing as YouTube
+        gap = common.MARATHON_GAP_MIN if marathon else 90
         for it in due:
             try:
                 path = publish.video_file(it, work)
@@ -240,14 +242,14 @@ def main():
                 at = datetime.fromisoformat(it["at"].replace("Z", "+00:00"))
                 dup = next((e for e, d in taken.items() if d[:40] == caption[:40]), None)
                 # exact: a hand-booked post (the GTA 6 trailer, 1 Nov 09:00) keeps its time even beside another
-                crowded = not it.get("exact") and any(abs(e - at.timestamp()) < 90 * 60 for e in taken)
+                crowded = not it.get("exact") and any(abs(e - at.timestamp()) < gap * 60 for e in taken)
                 if dup is not None:
                     at = datetime.fromtimestamp(dup, common.UTC)
                 elif at < datetime.now(common.UTC) + MIN_LEAD or crowded:
                     # missed or clashing slot: catch up at up to 4 a day (10:00/13:00/18:00/21:00 UK, 90+ min apart)
-                    # (Owner 2026-10-29: "up how many we post per day till it catches up")
+                    # (Owner 2026-10-29: "up how many we post per day till it catches up"); hourly in a marathon
                     at = common.next_slot([datetime.fromtimestamp(e, common.UTC).strftime("%Y-%m-%dT%H:%M:%SZ") for e in taken], [],
-                                          min_lead_h=1, marathon=True)
+                                          min_lead_h=1, marathon=marathon, catchup=not marathon)
                 epoch = int(at.timestamp())
                 if dup is not None:
                     print(f"{it['id']}: already scheduled on TikTok {common.uk(at)}")

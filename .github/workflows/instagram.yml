@@ -1,5 +1,5 @@
 # Posts the Shorts publish.py scheduled on YouTube to Instagram as Reels once their slot has passed
-# (Instagram's API cannot schedule). Runs just after every slot hour (10/13/18/21 UK, both GMT and BST).
+# (Instagram's API cannot schedule). Runs just after every hour a Short can go out (09:00-23:00).
 name: instagram
 on:
   workflow_dispatch:
@@ -9,7 +9,7 @@ on:
         default: "0"
   # Times are UTC. Re-pushed 2026-10-30: schedules stopped firing after the repo went public.
   schedule:
-    - cron: "5 9,10,12,13,17,18,20,21 * * *"
+    - cron: "5 8-23 * * *"   # hourly: marathon Shorts can take any hour 09:00-23:00 UK (GMT or BST)
 concurrency:
   group: instagram
   cancel-in-progress: false

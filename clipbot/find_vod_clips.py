@@ -505,6 +505,11 @@ def main():
     print(f"{len(wins)} scored windows -> {len(cands)} candidates, {len(marked)} marked moments; "
           f"{len(tl)} chat messages, {sum(1 for c in cands if c['chat'][0])} candidates with chat after them")
 
+    if a.picks < judge.MAX_JUDGE and common.marathon_mode():
+        # Owner 2026-11-14: "for the marathon I dont want just 4 a day, I want it clipping whatever it thinks is good,
+        # no limit". Everything that clears the bar among the stretches the judge hears is offered.
+        print(f"marathon: no pick cap (was {a.picks}), up to all {judge.MAX_JUDGE} judged stretches that clear the bar")
+        a.picks = judge.MAX_JUDGE
     ranked = choose(cands, wav, dur, v["title"], a.picks, words)
     queue = [(m, m["note"]) for m in marked] + ranked   # crew-marked moments are always offered, as before
     tries = len(marked) + min(len(ranked), a.picks + 4)  # a few spares for cuts that fail the footage checks

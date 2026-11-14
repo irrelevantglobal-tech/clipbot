@@ -173,7 +173,7 @@ def main():
     common.channel_gate()
     uploads = common.recent_uploads(50)            # raises if YouTube cannot be read -> nothing uploaded
     marathon = common.marathon_mode()
-    print("marathon mode: up to 4 Shorts a day" if marathon else "normal: up to 2 Shorts a day")
+    print("marathon mode: the next free hour 09:00-23:00 UK, no daily cap" if marathon else "normal: up to 2 Shorts a day")
     taken = [x["at"] for x in ledger if x.get("at")]
     work = os.path.abspath("work")
     os.makedirs(work, exist_ok=True)
@@ -194,7 +194,7 @@ def main():
                 print(f"{it['id']}: already scheduled/public as {existing['id']}, marking done")
                 common.worker("/clipbot/published", {"id": it["id"], "video": existing["id"], "at": existing["status"].get("publishAt"), "dup": True, **common.who_fields()})
                 continue
-            at = common.next_slot(taken, uploads, marathon=marathon)
+            at = common.next_slot(taken, uploads, min_lead_h=1 if marathon else 3, marathon=marathon)
             if at > common.datetime.now(common.UTC) + common.timedelta(hours=HORIZON_H):
                 print(f"next slot {common.uk(at)} is over {HORIZON_H}h away: holding {len(order) - i} approved clip(s) for a later run")
                 break

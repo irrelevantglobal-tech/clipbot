@@ -125,10 +125,15 @@ WORKER = os.environ.get("CLIPBOT_WORKER", "")        # the approval/queue worker
 # ClipBot or not), filling 18:00 first, then 13:00.
 DAY_SLOTS = ["18:00", "13:00"]
 MAX_PER_DAY = 2
-# Marathon mode (Owner 2026-10-28: "4 a day during marathons"): with a 10 h+ stream live now or in the
-# last 72 h, up to MARATHON_PER_DAY Shorts a day, the extra two at 21:00 then 10:00. Back to 2 after.
-MARATHON_SLOTS = ["18:00", "13:00", "21:00", "10:00"]
-MARATHON_PER_DAY = 4
+# Marathon mode, with a 10 h+ stream live now or in the last 72 h. Owner 2026-11-14 (GTA 6 marathon): "I dont
+# want just 4 a day... no limit", approved clips go out "hourly, no daily cap": the next free hour 09:00-23:00 UK,
+# at least MARATHON_GAP_MIN apart. Back to 2 a day after.
+MARATHON_SLOTS = [f"{h:02d}:00" for h in range(9, 24)]
+MARATHON_PER_DAY = len(MARATHON_SLOTS)
+MARATHON_GAP_MIN = 50
+# Catch-up pace for a missed or clashing TikTok slot outside a marathon (Owner 2026-10-29: up to 4 a day).
+CATCHUP_SLOTS = ["18:00", "13:00", "21:00", "10:00"]
+CATCHUP_PER_DAY = 4
 MARATHON_MIN_S = 10 * 3600
 
 
@@ -280,10 +285,12 @@ def marathon_mode():
     return False
 
 
-def next_slot(taken_utc, uploads, min_lead_h=3, marathon=False):
-    """Next free slot: first UK day with fewer than MAX_PER_DAY Shorts (MARATHON_PER_DAY in
-    marathon mode), at the first free slot time (nothing within 90 min) at least min_lead_h away."""
-    cap, slots = (MARATHON_PER_DAY, MARATHON_SLOTS) if marathon else (MAX_PER_DAY, DAY_SLOTS)
+def next_slot(taken_utc, uploads, min_lead_h=3, marathon=False, catchup=False):
+    """Next free slot: first UK day with fewer than MAX_PER_DAY Shorts, at the first free slot time (nothing within
+    90 min) at least min_lead_h away. Marathon: the earliest free hour 09:00-23:00 UK, no daily cap, 50 min apart.
+    catchup: TikTok's 4-a-day catch-up pace."""
+    cap, slots = (MARATHON_PER_DAY, MARATHON_SLOTS) if marathon else (CATCHUP_PER_DAY, CATCHUP_SLOTS) if catchup         else (MAX_PER_DAY, DAY_SLOTS)
+    gap = MARATHON_GAP_MIN if marathon else 90
     now = datetime.now(UTC)
     busy = [datetime.fromisoformat(t.replace("Z", "+00:00")) for t in taken_utc]
     per_day = {}
@@ -313,7 +320,7 @@ def next_slot(taken_utc, uploads, min_lead_h=3, marathon=False):
                 utc = datetime(day.year, day.month, day.day, h, m, tzinfo=UK).astimezone(UTC)
                 if utc < now + timedelta(hours=min_lead_h):
                     continue
-                if any(abs((utc - b).total_seconds()) < 90 * 60 for b in busy):
+                if any(abs((utc - b).total_seconds()) < gap * 60 for b in busy):
                     continue
                 return utc
         day += timedelta(days=1)
