@@ -64,6 +64,7 @@ jobs:
       TWITCH_CLIENT_SECRET: ${{ secrets.TWITCH_CLIENT_SECRET }}
       CLIPBOT_ID: ${{ secrets.CLIPBOT_ID }}
       KICK_SLUG: ${{ secrets.KICK_SLUG }}   # Kick VODs (k.../kt...): polished/source.py
+      KICK_CHANNEL_ID: ${{ secrets.KICK_CHANNEL_ID }}   # the slug must BE this channel, or nothing is read
       CLIPBOT_WORKER: ${{ secrets.CLIPBOT_WORKER }}
       CLIPBOT_TOKEN: ${{ secrets.CLIPBOT_TOKEN }}
       YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}

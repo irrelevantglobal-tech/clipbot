@@ -21,6 +21,7 @@ jobs:
       TO: ${{ inputs.to }}
       PRESSES: ${{ inputs.presses }}
       KICK_SLUG: ${{ inputs.slug || secrets.KICK_SLUG }}
+      KICK_CHANNEL_ID: ${{ inputs.slug == '' && secrets.KICK_CHANNEL_ID || '' }}   # checked only for OUR channel
     steps:
       - name: Check input
         run: |

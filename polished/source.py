@@ -34,7 +34,10 @@ import urllib.request
 from datetime import datetime, timezone
 
 KICK_SLUG = os.environ.get("KICK_SLUG") or ""   # THE Kick channel: the KICK_SLUG secret (identity stays out of this public repo)
+KICK_CHANNEL_ID = os.environ.get("KICK_CHANNEL_ID") or ""   # the KICK_CHANNEL_ID secret: the slug MUST be this channel
 KICK_API = "https://kick.com/api/v2/channels/%s/videos"
+KICK_CHANNEL = "https://kick.com/api/v2/channels/%s"
+_checked = set()
 UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
                     "Chrome/130.0 Safari/537.36", "Accept": "application/json"}
 
@@ -77,12 +80,35 @@ def _get(url, tries=4, timeout=30, headers=None):
 
 
 # ------------------------------------------------------------------ Kick
+def check_channel(slug, get=_get):
+    """17 Nov: the slug once pointed at a STRANGER's channel (a name Leon did not own). With KICK_CHANNEL_ID set
+    (every production workflow), the slug must resolve to that channel id, or nothing is read: never a silent wrong
+    channel. Channel ids survive a rename; a rename makes this fail loudly until KICK_SLUG is updated."""
+    if not KICK_CHANNEL_ID or slug in _checked:
+        return
+    try:
+        d = json.loads(get(KICK_CHANNEL % slug))
+    except Exception as e:   # noqa: BLE001 - 404 after a rename, Cloudflare, anything: refuse
+        raise RuntimeError(f"Kick channel {slug!r} could not be read ({str(e)[:120]}); the slug may have changed "
+                           f"(KICK_SLUG secret). Nothing read.")
+    if str(d.get("id")) != str(KICK_CHANNEL_ID):
+        raise RuntimeError(f"Kick slug {slug!r} is channel {d.get('id')}, not ours ({KICK_CHANNEL_ID}): WRONG CHANNEL, "
+                           "refusing. Fix the KICK_SLUG secret.")
+    _checked.add(slug)
+
+
 def kick_videos(slug=None, get=_get):
-    if not (slug or KICK_SLUG):
+    slug = slug or KICK_SLUG
+    if not slug:
         raise RuntimeError("no Kick channel: set the KICK_SLUG secret. Nothing read.")
-    d = json.loads(get(KICK_API % (slug or KICK_SLUG)))
+    check_channel(slug, get)
+    d = json.loads(get(KICK_API % slug))
     if not isinstance(d, list):
-        raise RuntimeError(f"Kick videos for {slug or KICK_SLUG}: not a list ({str(d)[:120]})")
+        raise RuntimeError(f"Kick videos for {slug}: not a list ({str(d)[:120]})")
+    if KICK_CHANNEL_ID:
+        other = {str(v.get("channel_id")) for v in d} - {str(KICK_CHANNEL_ID)}
+        if other:
+            raise RuntimeError(f"Kick videos for {slug} include channel(s) {sorted(other)}, not ours: refusing")
     return d
 
 
@@ -290,6 +316,7 @@ def main(argv=None):
     KICK_SLUG = a.slug
     import polished.source as imported   # `python -m` runs a SECOND copy of this module: fetch.py uses the imported one
     imported.KICK_SLUG = a.slug
+    imported.KICK_CHANNEL_ID = KICK_CHANNEL_ID
     return _probe(a)
 
 

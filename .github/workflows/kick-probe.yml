@@ -22,6 +22,7 @@ jobs:
       FROM: ${{ inputs.from }}
       TO: ${{ inputs.to }}
       KICK_SLUG: ${{ secrets.KICK_SLUG }}   # used when the slug input is empty
+      KICK_CHANNEL_ID: ${{ inputs.slug == '' && secrets.KICK_CHANNEL_ID || '' }}   # checked only for OUR channel
     steps:
       - name: Check input
         run: |

@@ -45,6 +45,7 @@ jobs:
       CLIPBOT_TOKEN: ${{ secrets.CLIPBOT_TOKEN }}
       CLIPBOT_ID: ${{ secrets.CLIPBOT_ID }}   # channel identity (names live only in this secret: the repo is public)
       KICK_SLUG: ${{ secrets.KICK_SLUG }}   # Kick VODs (k.../kt...): polished/source.py
+      KICK_CHANNEL_ID: ${{ secrets.KICK_CHANNEL_ID }}   # the slug must BE this channel, or nothing is read
       CLIPBOT_WORKER: ${{ secrets.CLIPBOT_WORKER }}
     steps:
       - name: Check input

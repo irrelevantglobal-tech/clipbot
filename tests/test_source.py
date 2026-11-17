@@ -76,9 +76,10 @@ class Ids(unittest.TestCase):
 
 class KickInfo(unittest.TestCase):
     def setUp(self):
-        p = mock.patch.object(source, "KICK_SLUG", "chan")
-        p.start()
-        self.addCleanup(p.stop)
+        for k, v in (("KICK_SLUG", "chan"), ("KICK_CHANNEL_ID", "")):
+            p = mock.patch.object(source, k, v)
+            p.start()
+            self.addCleanup(p.stop)
 
     def test_no_slug_refuses_before_any_request(self):
         g = fake_get(vids())
@@ -129,6 +130,52 @@ class KickInfo(unittest.TestCase):
             return "\n".join(l for l in MASTER_TEXT.splitlines() if "1920x1080" not in l and l != "1080p/playlist.m3u8").encode()
         with self.assertRaises(RuntimeError):
             source.kick_rendition("k138370155", get=g)
+
+
+class ChannelGuard(unittest.TestCase):
+    """17 Nov: KICK_SLUG once named a stranger's channel. With KICK_CHANNEL_ID set the slug must BE that channel."""
+
+    def g(self, chan_id, video_channel=27756480):
+        calls = []
+
+        def get(url, **kw):
+            calls.append(url)
+            if url.endswith("/videos"):
+                return json.dumps([dict(v, channel_id=video_channel) for v in vids()]).encode()
+            if "/api/v2/channels/" in url:
+                return json.dumps({"id": chan_id, "slug": "x"}).encode()
+            return MASTER_TEXT.encode()
+        get.calls = calls
+        return get
+
+    def setUp(self):
+        source._checked.clear()
+        for k, v in (("KICK_SLUG", "chan"), ("KICK_CHANNEL_ID", "27756480")):
+            p = mock.patch.object(source, k, v)
+            p.start()
+            self.addCleanup(p.stop)
+
+    def test_our_channel_reads(self):
+        g = self.g(27756480)
+        self.assertEqual(source.kick_info("k138370155", get=g)["kick_id"], "k138370155")
+        source.kick_info("k138370155", get=g)
+        self.assertEqual(sum(1 for c in g.calls if c.endswith("/channels/chan")), 1)   # checked once per run
+
+    def test_a_strangers_channel_refuses_before_any_vod_is_read(self):
+        g = self.g(111569384)
+        with self.assertRaisesRegex(RuntimeError, "WRONG CHANNEL"):
+            source.kick_info("k138370155", get=g)
+        self.assertFalse(any(c.endswith("/videos") for c in g.calls))
+
+    def test_a_renamed_away_slug_refuses(self):
+        def get(url, **kw):
+            raise RuntimeError("HTTP Error 404")
+        with self.assertRaisesRegex(RuntimeError, "slug may have changed"):
+            source.kick_info("k138370155", get=get)
+
+    def test_videos_of_another_channel_refuse(self):
+        with self.assertRaises(RuntimeError):
+            source.kick_info("k138370155", get=self.g(27756480, video_channel=5))
 
 
 class FetchOnKick(unittest.TestCase):
