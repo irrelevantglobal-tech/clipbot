@@ -1,0 +1,46 @@
+name: kick probe (CPU only; only the KICK_SLUG secret)
+# Kick pivot (17 Nov): can an Actions runner read a Kick channel's VOD list, its 1080p playlist and real segments,
+# and cut an exact window with polished/fetch.py? $0: a runner and Kick's public JSON/playlists; nothing is rented,
+# posted or uploaded. Gentle: one channel list, one master, one variant playlist, one segment head, then only the
+# segments of the requested window (a 60 s window = ~8 segments).
+on:
+  workflow_dispatch:
+    inputs:
+      slug: {description: "Kick channel slug (empty = the KICK_SLUG secret)", default: ""}
+      vod: {description: "Kick VOD id: k<digits> or kt<unix start> (empty = the channel's newest)", default: ""}
+      from: {description: "window start, VOD seconds", default: "0"}
+      to: {description: "window end, VOD seconds (0 = no window fetch)", default: "0"}
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      SLUG: ${{ inputs.slug }}
+      VOD: ${{ inputs.vod }}
+      FROM: ${{ inputs.from }}
+      TO: ${{ inputs.to }}
+      KICK_SLUG: ${{ secrets.KICK_SLUG }}   # used when the slug input is empty
+    steps:
+      - name: Check input
+        run: |
+          [[ -z "$SLUG" || "$SLUG" =~ ^[A-Za-z0-9_-]{2,40}$ ]] || { echo "bad slug"; exit 1; }
+          [[ -z "$VOD" || "$VOD" =~ ^kt?[0-9]{5,14}$ ]] || { echo "bad vod id"; exit 1; }
+          [[ "$FROM" =~ ^[0-9]+(\.[0-9]+)?$ && "$TO" =~ ^[0-9]+(\.[0-9]+)?$ ]] || { echo "bad numbers"; exit 1; }
+          python3 -c "import os,sys; sys.exit(float(os.environ['TO']) - float(os.environ['FROM']) > 300)" || { echo "window over 300 s: this is a probe"; exit 1; }
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: for i in 1 2 3 4; do sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg && break; sleep 30; done; command -v ffmpeg > /dev/null && command -v ffprobe > /dev/null
+      - name: Probe
+        run: |
+          python -m polished.source probe --slug "$SLUG" --vod "$VOD" --from "$FROM" --to "$TO" --work "$RUNNER_TEMP" --out kick-probe.json
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kick-probe-${{ github.run_id }}
+          path: kick-probe.json
+          if-no-files-found: ignore
+          retention-days: 14

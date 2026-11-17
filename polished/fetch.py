@@ -45,7 +45,12 @@ def _get(url, rng=None, tries=5, timeout=60):
 
 
 def rendition(vod):
-    """The 1080 rendition's playlist URL + fps. Raises unless the VOD has a 1920x1080 rendition."""
+    """The 1080 rendition's playlist URL + fps + duration. Raises unless the VOD has a 1920x1080 rendition.
+    A Kick VOD ("k<id>", polished/source.py) is read from Kick's own API + master playlist, not yt-dlp."""
+    from polished import source
+    if source.is_kick(vod):
+        url, fps, inf = source.kick_rendition(vod)
+        return url, fps, inf["duration"]
     out = subprocess.run(["yt-dlp", "-J", "--no-warnings", f"https://www.twitch.tv/videos/{vod}"],
                          capture_output=True, text=True, encoding="utf-8")
     if out.returncode:
@@ -105,8 +110,15 @@ def fetch(vod, a, b, out, pad=2.0, url=None):
         segs = [(s, d, os.path.join(arch, "seg_%06d.ts" % i)) for i, (s, d) in enumerate(pl["segments"])]
         recording = False
     else:
+        from polished import source
+        kick_live = None
+        if source.is_kick(vod) and not url:
+            url, _, inf = source.kick_rendition(vod)
+            kick_live = inf["recording"]
         url = url or rendition(vod)[0]
         segs, recording = playlist(url)
+        if source.is_kick(vod):   # Kick's playlist says ENDLIST even while live: only the API knows
+            recording = kick_live
     total = segs[-1][0] + segs[-1][1]
     if a >= total:
         raise RuntimeError(f"VOD {vod} has {total:.0f} s, asked from {a:.0f} s")

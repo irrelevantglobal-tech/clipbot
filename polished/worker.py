@@ -1,7 +1,9 @@
 """The polished recipe as a command line, for GPU hosts that are not Modal (lane 2: Vast.ai over SSH).
 
-    python -m polished.worker analyze <vod> <lo> <hi> <out.json>
-    python -m polished.worker render <vod> <plan.json> <title> <game> <brand> <login> <out_dir>
+    python -m polished.worker analyze <vod> <lo> <hi> <out.json> [<1080p playlist url>]
+    python -m polished.worker render <vod> <plan.json> <title> <game> <brand> <login> <out_dir> [<url>]
+
+The optional url is the VOD's 1080p playlist, resolved on the runner (Kick: GPU hosts never call Kick's API).
 
 Writes temp -> verify -> rename, so a dropped SSH session never leaves a half file that looks done.
 """
@@ -21,7 +23,7 @@ def main(argv):
         vod, lo, hi, out = argv[1], float(argv[2]), float(argv[3]), argv[4]
         t0 = time.time()
         wd = os.path.splitext(out)[0] + "_work"   # never ".json" in a folder name: the kit rewrites ".json" in paths
-        r = stages.analyze_chunk(vod, lo, hi, wd)
+        r = stages.analyze_chunk(vod, lo, hi, wd, url=argv[5] if len(argv) > 5 else None)
         r["container_s"] = round(time.time() - t0, 1)
         json.dump(r, open(out + ".part", "w"))
         os.replace(out + ".part", out)
@@ -38,7 +40,8 @@ def main(argv):
         if not os.path.exists(outro):
             os.replace(stings.outro(game, brand, login, bdir, retired), outro)
         intro = stings.intro(title, game, brand, login, bdir, retired, index=index)
-        out, r = stages.render_episode(vod, plan, intro, outro, os.path.join(out_dir, "_work"))
+        out, r = stages.render_episode(vod, plan, intro, outro, os.path.join(out_dir, "_work"),
+                                       url=argv[8] if len(argv) > 8 else None)
         dst = os.path.join(out_dir, "episode.mp4")
         os.replace(out, dst)
         r.update({"size": os.path.getsize(dst), "container_s": round(time.time() - t0, 1)})

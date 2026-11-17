@@ -23,6 +23,7 @@ import time
 from datetime import date, datetime, timedelta
 
 from . import common, episodes
+from polished import source  # noqa: E402 - Kick VOD ids (k.../kt...) order Parts by their number too
 
 LAUNCH = (date(2026, 11, 19), date(2026, 12, 2))
 LAUNCH_SLOTS, NORMAL_SLOTS = ["12:00", "18:00"], ["18:00"]
@@ -71,7 +72,7 @@ def order(items):
     for it in items:
         by.setdefault(it.get("series") or "GTA 6", []).append(it)
     for s in by.values():
-        s.sort(key=lambda x: (x.get("vod_created") or "", int(x.get("vod") or 0), float(x.get("start") or 0)))
+        s.sort(key=lambda x: (x.get("vod_created") or "", source.num(x.get("vod") or 0), float(x.get("start") or 0)))
     return by
 
 

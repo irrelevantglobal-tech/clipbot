@@ -1,10 +1,10 @@
-name: sleep-skip probe (CPU only, no GPU, no secrets)
+name: sleep-skip probe (CPU only, no GPU; only the KICK_SLUG secret)
 # Runs ONLY the sleep-skip check (polished/sleepskip.py) on a VOD window and saves its report. $0: an Actions
 # runner, Twitch's public playlists and two public models; nothing is rented, posted or uploaded.
 on:
   workflow_dispatch:
     inputs:
-      vod: {description: "Twitch VOD id", required: true}
+      vod: {description: "Twitch VOD id, or Kick k<id> / kt<unix start>", required: true}
       from: {description: "window start, VOD seconds", default: "0"}
       to: {description: "window end, VOD seconds (0 = the end)", default: "0"}
       presses: {description: 'test presses as JSON in VOD seconds, e.g. [{"t":3600,"mode":"asleep"}]', default: "[]"}
@@ -19,10 +19,11 @@ jobs:
       FROM: ${{ inputs.from }}
       TO: ${{ inputs.to }}
       PRESSES: ${{ inputs.presses }}
+      KICK_SLUG: ${{ secrets.KICK_SLUG }}
     steps:
       - name: Check input
         run: |
-          [[ "$VOD" =~ ^[0-9]{6,14}$ ]] || { echo "bad vod id"; exit 1; }
+          [[ "$VOD" =~ ^(kt?)?[0-9]{6,14}$ ]] || { echo "bad vod id"; exit 1; }
           [[ "$FROM" =~ ^[0-9]+(\.[0-9]+)?$ && "$TO" =~ ^[0-9]+(\.[0-9]+)?$ ]] || { echo "bad numbers"; exit 1; }
           printf '%s' "$PRESSES" | python3 -c "import json,sys; p=json.load(sys.stdin); assert isinstance(p, list) and len(p) < 50" || { echo "bad presses"; exit 1; }
       - uses: actions/checkout@v4

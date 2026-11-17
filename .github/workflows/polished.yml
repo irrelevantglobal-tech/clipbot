@@ -63,6 +63,7 @@ jobs:
       TWITCH_CLIENT_ID: ${{ secrets.TWITCH_CLIENT_ID }}
       TWITCH_CLIENT_SECRET: ${{ secrets.TWITCH_CLIENT_SECRET }}
       CLIPBOT_ID: ${{ secrets.CLIPBOT_ID }}
+      KICK_SLUG: ${{ secrets.KICK_SLUG }}   # Kick VODs (k.../kt...): polished/source.py
       CLIPBOT_WORKER: ${{ secrets.CLIPBOT_WORKER }}
       CLIPBOT_TOKEN: ${{ secrets.CLIPBOT_TOKEN }}
       YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
@@ -91,7 +92,7 @@ jobs:
     steps:
       - name: Check input
         run: |
-          [[ "$VOD" =~ ^[0-9]{6,14}$ ]] || { echo "bad vod id"; exit 1; }
+          [[ "$VOD" =~ ^(kt?)?[0-9]{6,14}$ ]] || { echo "bad vod id"; exit 1; }
           [[ "$FROM" =~ ^[0-9]+(\.[0-9]+)?$ && "$TO" =~ ^[0-9]+(\.[0-9]+)?$ && "$MAXEP" =~ ^[0-9]+$ && "$KEEP" =~ ^[0-9]+$ ]] || { echo "bad numbers"; exit 1; }
           [[ "$SERIES" =~ ^[A-Za-z0-9\ :\'-]{2,40}$ ]] || { echo "bad series"; exit 1; }
           [[ "$LANE" =~ ^(auto|modal|vast)$ ]] || { echo "bad lane"; exit 1; }

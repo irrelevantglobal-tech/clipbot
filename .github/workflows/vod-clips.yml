@@ -44,10 +44,11 @@ jobs:
       TWITCH_CLIENT_SECRET: ${{ secrets.TWITCH_CLIENT_SECRET }}
       CLIPBOT_TOKEN: ${{ secrets.CLIPBOT_TOKEN }}
       CLIPBOT_ID: ${{ secrets.CLIPBOT_ID }}   # channel identity (names live only in this secret: the repo is public)
+      KICK_SLUG: ${{ secrets.KICK_SLUG }}   # Kick VODs (k.../kt...): polished/source.py
       CLIPBOT_WORKER: ${{ secrets.CLIPBOT_WORKER }}
     steps:
       - name: Check input
-        run: '[[ "$VOD" =~ ^[0-9]{6,14}$ && "$FROM" =~ ^[0-9]+$ && "$TO" =~ ^[0-9]+$ && "$PICKS" =~ ^[1-9]$ && "$CLIPBOT_WHO" =~ ^(leon|glatiar)$ ]] || { echo "bad input"; exit 1; }'
+        run: '[[ "$VOD" =~ ^(kt?)?[0-9]{6,14}$ && "$FROM" =~ ^[0-9]+$ && "$TO" =~ ^[0-9]+$ && "$PICKS" =~ ^[1-9]$ && "$CLIPBOT_WHO" =~ ^(leon|glatiar)$ ]] || { echo "bad input"; exit 1; }'
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:

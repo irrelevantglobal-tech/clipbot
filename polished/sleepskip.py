@@ -116,6 +116,33 @@ class TwitchSource:
         return self.asegs[pick[0]][0]
 
 
+class KickSource(TwitchSource):
+    """Kick VOD ("k<id>" / "kt<start>", polished/source.py): frames from the 1080p segment heads, audio from the
+    SMALLEST rendition's whole segments (Kick has no audio-only rendition; 160p carries the same AAC, ~0.4 MB per
+    10 s). "Still recording" comes from Kick's API: its playlist says ENDLIST even while live."""
+
+    def __init__(self, vod, url=None):
+        from polished import fetch, source
+        self.fetch = fetch
+        self.vod = str(vod)
+        v_url, _, inf = source.kick_rendition(vod)
+        self.vsegs = fetch.playlist(url or v_url)[0]
+        self.recording = bool(inf["recording"])
+        au = source.kick_audio(inf)
+        self.asegs = fetch.playlist(au)[0] if au else None
+        self.total = self.vsegs[-1][0] + self.vsegs[-1][1]
+        if self.asegs:   # same rule as Twitch: the audio playlist must keep the video's clock, or no audio = no skip
+            n = min(len(self.asegs), len(self.vsegs)) - 1
+            if n < 0 or abs(self.asegs[n][0] - self.vsegs[n][0]) > 1.0:
+                log("audio playlist clock disagrees with the video one: no audio, so nothing is skipped")
+                self.asegs = None
+
+
+def source_for(vod):
+    from polished import source
+    return KickSource(vod) if source.is_kick(vod) else TwitchSource(vod)
+
+
 class FileSource:
     """Offline tests: one local video (VOD second = file second + offset) and optionally a separate audio file."""
 
@@ -454,7 +481,7 @@ def main():
         print("refs: %d frames -> %s (stream-scene score median %.2f, min %.2f)" % (len(frames), a.out,
               float(np.median(sc)), float(sc.min())))
         return 0
-    src = TwitchSource(a.vod) if a.vod else FileSource(a.video, a.audio)
+    src = source_for(a.vod) if a.vod else FileSource(a.video, a.audio)
     presses = json.load(open(a.presses, encoding="utf-8")) if a.presses else []
     rep = decide(src, a.lo, a.hi or src.total, presses, refs=load_refs(a.refs))
     js = json.dumps(rep, indent=1, ensure_ascii=False)

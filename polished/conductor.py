@@ -35,7 +35,7 @@ import traceback
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, ROOT)
-from polished import ledger, stages  # noqa: E402
+from polished import ledger, source, stages  # noqa: E402
 from polished.status import Status  # noqa: E402
 
 CHUNK = 1800.0
@@ -100,6 +100,7 @@ def jload(path, default=None):
 class Run:
     def __init__(self, a):
         self.a = a
+        self.src_url = None      # Kick: the 1080p playlist, resolved here and handed to the GPU hosts
         self.state = a.state
         os.makedirs(self.state, exist_ok=True)
         os.makedirs(a.out, exist_ok=True)
@@ -206,7 +207,7 @@ class Run:
             from polished import sleepskip
             t0 = datetime.fromisoformat(created.replace("Z", "+00:00")).timestamp()
             presses = [dict(x, t=x["t"] - t0) for x in self.st.sleep_log()]
-            src = sleepskip.TwitchSource(vod)
+            src = sleepskip.source_for(vod)
             rep = sleepskip.decide(src, lo, hi, presses)
             rep["fetch"] = {"segments": [0, 0], "recording": bool(src.recording), "vod_total": round(src.total, 3),
                             "fps": 60.0}
@@ -375,13 +376,13 @@ class ModalLane:
         self.run.cost["modal"] += ledger.modal_estimate(rep.get("gpu"), float(rep.get("container_s") or 0), egress_gib=egress_gib)
 
     def analyze_many(self, vod, todo):
-        calls = {c: self.fa.spawn(vod, c[0], c[1]) for c in todo}
+        calls = {c: self.fa.spawn(vod, c[0], c[1], self.run.src_url) for c in todo}
         for c, fc in calls.items():
             try:
                 r = fc.get(timeout=3600)
             except Exception as e:   # noqa: BLE001 - one retry per chunk, then the window fails
                 log(f"  chunk {c[0]:.0f} failed once ({str(e)[:160]}); retrying")
-                r = self.fa.remote(vod, c[0], c[1])
+                r = self.fa.remote(vod, c[0], c[1], self.run.src_url)
             self._charge(r)
             yield c, r
 
@@ -456,7 +457,7 @@ class ModalLane:
                 self.run.st.event("retry", f"an episode render failed ({str(e)[:100]}); rendering it again", urgent=False)
 
     def _render_attempt(self, vod, p, t, b, k):
-        fc = self.fr.spawn(vod, p, t, self.run.a.series, b["brand"], b["login"], k, b["retired"])
+        fc = self.fr.spawn(vod, p, t, self.run.a.series, b["brand"], b["login"], k, b["retired"], self.run.src_url)
         # QA faults fire right after the call is placed (a fast render used to finish before the 60 s mark)
         if fault("client_dies"):
             time.sleep(5)
@@ -538,6 +539,10 @@ class VastLane:
         self.run.cost["vast"] += self.job.spent()
         return self.job.__exit__(*exc)
 
+    def _url(self):
+        import shlex
+        return (" " + shlex.quote(self.run.src_url)) if self.run.src_url else ""
+
     def _py(self, args, timeout):
         return self.host.run("cd /root/repo && /opt/conda/bin/python -m polished.worker " + args, timeout=timeout,
                              step=args.split()[0] + " " + args.split()[2][:12])
@@ -546,7 +551,7 @@ class VastLane:
         for c in todo:
             self.job.check_money()
             rp = "/root/an_%d.json" % int(c[0])
-            self._py("analyze %s %.3f %.3f %s" % (vod, c[0], c[1], rp), timeout=1800)
+            self._py("analyze %s %.3f %.3f %s%s" % (vod, c[0], c[1], rp, self._url()), timeout=1800)
             loc = os.path.join(self.job.dir, "an.json")
             self.host.get(rp, loc, timeout=300, step="get analysis")
             self.host.run("rm -f " + rp, timeout=60, step="cleanup")
@@ -581,7 +586,7 @@ class VastLane:
         od = "/root/ep_%s" % k
         self._py("render %s /root/plan_%s.json %s %s %s %s %s" % (
             vod, k, shlex.quote(t), shlex.quote(self.run.a.series), shlex.quote(b["brand"]),
-            shlex.quote(b["login"]), od), timeout=3600)
+            shlex.quote(b["login"]), od) + self._url(), timeout=3600)
         rep_l = os.path.join(self.job.dir, "rep_%s.json" % k)
         self.host.get(od + "/report.json", rep_l)
         rep = jload(rep_l)
@@ -609,7 +614,7 @@ class LocalLane:
     def analyze_many(self, vod, todo):
         for c in todo:
             t0 = time.time()
-            r = stages.analyze_chunk(vod, c[0], c[1], os.path.join(self.run.a.out, "_an_%d" % int(c[0])))
+            r = stages.analyze_chunk(vod, c[0], c[1], os.path.join(self.run.a.out, "_an_%d" % int(c[0])), url=self.run.src_url)
             r["container_s"] = round(time.time() - t0, 1)
             shutil.rmtree(os.path.join(self.run.a.out, "_an_%d" % int(c[0])), ignore_errors=True)
             yield c, r
@@ -629,7 +634,8 @@ class LocalLane:
                     if outro is None:
                         outro = stings.outro(self.run.a.series, b["brand"], b["login"], bdir, b["retired"])
                     intro = stings.intro(t, self.run.a.series, b["brand"], b["login"], bdir, b["retired"], index=index)
-                    mp4, rep = stages.render_episode(vod, p, intro, outro, os.path.join(self.run.a.out, "_ep_" + k))
+                    mp4, rep = stages.render_episode(vod, p, intro, outro, os.path.join(self.run.a.out, "_ep_" + k),
+                                                     url=self.run.src_url)
                     dst = os.path.join(self.run.a.out, "%s.mp4" % k)
                     os.replace(mp4, dst)
                     rep["size"] = os.path.getsize(dst)
@@ -666,10 +672,14 @@ def main():
     run.ident = {"brand": common.BRAND, "login": common.LOGIN,
                  "retired": [n for n in common.IDENT.get("legacy", []) if n]}   # the stings refuse these names
     run.brand = common.BRAND
-    v = common.helix(f"videos?id={a.vod}")["data"][0]
-    total = episodes._secs(v["duration"])
+    v = source.info(a.vod)          # Twitch (Helix) or Kick (its public channel JSON): title, start, length
+    total = v["duration"]
+    if source.is_kick(a.vod) and v["recording"]:   # Kick says duration 0 while live: the playlist has the length
+        from polished import fetch as _f
+        _s = _f.playlist(source.kick_rendition(a.vod)[0])[0]
+        total = _s[-1][0] + _s[-1][1]
     lo, hi = a.lo, min(a.hi or total, total)
-    man = {"vod": a.vod, "vod_title": v["title"], "vod_created": v["created_at"], "series": a.series,
+    man = {"vod": a.vod, "vod_title": v["title"], "vod_created": v["created"], "series": a.series,
            "window": [lo, hi], "final": a.final, "polished": True, "episodes": [], "holes": []}
     mpath = os.path.join(a.out, "episodes.json")
     t_run = time.time()
@@ -705,11 +715,11 @@ def main():
         from polished import fetch
         if fault("no_1080"):
             raise RuntimeError(f"VOD {a.vod} has no 1920x1080 rendition (fault no_1080); refusing (owner: everything 1080p)")
-        fetch.rendition(a.vod)
+        run.src_url = fetch.rendition(a.vod)[0] if source.is_kick(a.vod) else None   # GPU hosts get it, never ask Kick
         run.money["api"] = max(0.0, run.api_budget() - run.api_spent0)
         if run.gem_budget() > 0:
             run.money["gemini"] = max(0.0, run.gem_budget() - run.gem_spent0)
-        sleep = run.sleep_skip(a.vod, lo, hi, v["created_at"])
+        sleep = run.sleep_skip(a.vod, lo, hi, v["created"])
         run.tell_sleep(sleep, lo)
         gpu_s = (hi - lo) - sum(b - a_ for a_, b in sleep.get("skips") or [])
         man["sleep_skips"] = sleep.get("skips") or []
@@ -823,10 +833,10 @@ def series_base(common, series, vod, first_start):
             continue
         parts = str(it.get("marker", "")).rsplit(":", 2)
         try:
-            v, s = int(parts[-2]), float(parts[-1])
+            v, s = source.num(parts[-2]), float(parts[-1])
         except (ValueError, IndexError):
             continue
-        if (v, s) < (int(vod), float(first_start)):
+        if (v, s) < (source.num(vod), float(first_start)):
             n += 1
     return n
 

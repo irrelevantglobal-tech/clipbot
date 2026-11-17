@@ -54,17 +54,19 @@ def _repo():
 
 
 @app.function(gpu=GPUS, cpu=4.0, memory=8192, timeout=3600, retries=0)
-def analyze(vod: str, lo: float, hi: float):
+def analyze(vod: str, lo: float, hi: float, url: str = None):
+    """url: the 1080p playlist, resolved on the runner (Kick: GPU hosts never call Kick's API)."""
     _repo()
     from polished import stages
     t0 = time.time()
-    r = stages.analyze_chunk(vod, lo, hi, "/tmp/an")
+    r = stages.analyze_chunk(vod, lo, hi, "/tmp/an", url=url)
     r["container_s"] = round(time.time() - t0, 1)
     return r
 
 
 @app.function(gpu=GPUS, cpu=4.0, memory=8192, timeout=3600, retries=0, volumes={"/xfer": vol})
-def render(vod: str, plan: dict, title: str, game: str, brand: str, login: str, key: str, retired: list = None):
+def render(vod: str, plan: dict, title: str, game: str, brand: str, login: str, key: str, retired: list = None,
+           url: str = None):
     """Renders one episode to /xfer/out/<key>.mp4 (+ its report). Re-run with the same key = no-op."""
     _repo()
     import hashlib
@@ -95,7 +97,7 @@ def render(vod: str, plan: dict, title: str, game: str, brand: str, login: str, 
     t_s = time.time()
     intro = stings.intro(title, game, brand, login, "/tmp/brand", retired, index=index)
     t_sting = time.time() - t_s
-    out, r = stages.render_episode(vod, plan, intro, outro, work)
+    out, r = stages.render_episode(vod, plan, intro, outro, work, url=url)
     shutil.copy(out, dst + ".part")
     os.replace(dst + ".part", dst)
     r.update({"key": key, "size": os.path.getsize(dst), "sting_s": round(t_sting, 1),
