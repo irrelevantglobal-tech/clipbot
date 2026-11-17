@@ -28,6 +28,7 @@ import subprocess
 import sys
 
 from . import chat, common, judge, render
+from polished import source  # noqa: E402 - Kick VODs (owner 17 Nov: the marathon streams on Kick only)
 
 GAP = 1.2
 MAX_WIN = 40.0
@@ -466,14 +467,21 @@ def main():
     base = audio_base(a.lo, a.hi)
     os.makedirs(a.out, exist_ok=True)
     url = f"https://www.twitch.tv/videos/{a.vod}"
+    kick = source.is_kick(a.vod)   # Kick: its own API + playlists; no Twitch clips to exclude, no chat replay
 
-    v = common.helix(f"videos?id={a.vod}")["data"][0]
+    if kick:
+        inf = source.info(a.vod)
+        v = {"title": inf["title"], "created_at": inf["created"], "duration": "live" if inf["recording"] else f"{inf['duration']:.0f}s"}
+    else:
+        v = common.helix(f"videos?id={a.vod}")["data"][0]
     print(f"VOD {a.vod}  {v['duration']}  {v['created_at']}")
-    if common.WHO != "leon" and v.get("user_id") != common.TWITCH_UID:
+    if not kick and common.WHO != "leon" and v.get("user_id") != common.TWITCH_UID:
         raise SystemExit(f"VOD {a.vod} belongs to {v.get('user_login')}, not {common.LOGIN}. Nothing picked.")
 
     audio = os.path.join(a.out, "audio.m4a")
     wav = os.path.join(a.out, "audio.wav")
+    if not os.path.exists(wav) and kick:
+        source.audio_window(a.vod, base, a.hi, wav, max_s=a.max_seconds)
     if not os.path.exists(wav):
         section = ["--download-sections", f"*{base:.2f}-{a.hi:.2f}" if a.hi else f"*{base:.2f}-inf"] if windowed else []
         subprocess.run(["yt-dlp", "-q", "--no-progress", "-N", "8", "-f", "Audio_Only/bestaudio", *section, "-o", audio, url], check=True)
@@ -493,13 +501,13 @@ def main():
     if len(words) < 200:
         raise SystemExit("transcript is nearly empty; refusing to pick clips from nothing")
 
-    exclude = [(x - base, y - base) for x, y in common.vod_clips(a.vod) if y > base and x < base + dur]
+    exclude = [] if kick else [(x - base, y - base) for x, y in common.vod_clips(a.vod) if y > base and x < base + dur]
     print(f"{len(exclude)} existing Twitch clips excluded")
     wins = windows(words, peaks(wav), dur, exclude, base=base, tail=not a.hi)
     cands = shortlist(wins, words, dur)
     marked = moment_cands(moments(a.vod, base, dur), wins, words, dur, exclude)
     cands = [c for c in cands if all(abs(c["s"] - m["s"]) > SPACING for m in marked)]
-    tl = chat.timeline(a.vod, base, base + dur + chat.AFTER) if cands else []
+    tl = chat.timeline(a.vod, base, base + dur + chat.AFTER) if cands and not kick else []
     for c in cands:
         c["chat"] = chat.around(tl, c["s"] + base, c["e"] + base)
     print(f"{len(wins)} scored windows -> {len(cands)} candidates, {len(marked)} marked moments; "
@@ -523,9 +531,12 @@ def main():
         n = len(clips) + 1
         raw = os.path.join(a.out, f"raw{n}.mp4")
         tmp = raw + ".part.mp4"
-        subprocess.run(["yt-dlp", "-q", "--no-progress", "-N", "8", "-f", render.VOD_FORMAT,
-                        "--download-sections", f"*{c['s'] + base:.2f}-{c['e'] + base:.2f}", "--force-keyframes-at-cuts",
-                        "-o", tmp, url], check=True)
+        if kick:
+            source.video_window(a.vod, c["s"] + base, c["e"] + base, tmp)
+        else:
+            subprocess.run(["yt-dlp", "-q", "--no-progress", "-N", "8", "-f", render.VOD_FORMAT,
+                            "--download-sections", f"*{c['s'] + base:.2f}-{c['e'] + base:.2f}", "--force-keyframes-at-cuts",
+                            "-o", tmp, url], check=True)
         render.require_1080(tmp, f"clip {n} source")
         heard = render.transcribe(tmp)               # the captions' words; also proves the footage is the moment
         ok, r = aligned([w for w in c.get("words") or words if c["s"] <= w["s"] <= c["e"]], heard)

@@ -172,6 +172,50 @@ def kick_audio(inf):
     return min(vs, key=lambda f: (f["height"], f["bw"]))["url"] if vs else None
 
 
+def audio_window(vod, lo, hi, out, max_s=0.0, ff="ffmpeg"):
+    """Kick: the audio of [lo, hi] (VOD seconds; hi 0 = to the end) -> 16 kHz mono wav whose t=0 IS lo. Whole segments
+    of the smallest rendition (Kick has no audio-only one), then an exact trim. Returns the wav's length in seconds."""
+    import concurrent.futures as cf
+    import subprocess
+    from polished import fetch
+    inf = kick_info(vod)
+    segs = fetch.playlist(kick_audio(inf))[0]
+    total = segs[-1][0] + segs[-1][1]
+    hi = min(hi or total, total)
+    if hi - lo < 1:
+        raise RuntimeError(f"Kick VOD {vod} has {total:.0f} s, asked {lo:.0f}-{hi:.0f}")
+    pick = [k for k, (s0, d, _) in enumerate(segs) if s0 + d > lo and s0 < hi]
+    ts = out + ".src.ts"
+    with cf.ThreadPoolExecutor(8) as ex:
+        parts = list(ex.map(lambda k: fetch._get(segs[k][2]), pick))
+    with open(ts, "wb") as f:
+        for x in parts:
+            f.write(x)
+    want = (hi - lo) if not max_s else min(hi - lo, max_s)
+    try:
+        subprocess.run([ff, "-v", "error", "-y", "-i", ts, "-ss", "%.3f" % (lo - segs[pick[0]][0]), "-t", "%.3f" % want,
+                        "-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", out], check=True)
+    finally:
+        os.remove(ts)
+    return want
+
+
+def video_window(vod, a, b, out, ff="ffmpeg"):
+    """Kick: exactly [a, b] (VOD seconds) of the 1080p rendition -> out (.mp4, re-encoded at the cut like yt-dlp's
+    --force-keyframes-at-cuts). polished.fetch takes whole segments and knows the VOD second at the file's start."""
+    import subprocess
+    from polished import fetch
+    ts = out + ".src.ts"
+    f = fetch.fetch(vod, a, b, ts)
+    try:
+        subprocess.run([ff, "-v", "error", "-y", "-ss", "%.3f" % (a - f["origin"]), "-i", ts, "-t", "%.3f" % (b - a),
+                        "-c:v", "libx264", "-preset", "veryfast", "-crf", "16", "-pix_fmt", "yuv420p",
+                        "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", out], check=True)
+    finally:
+        os.remove(ts)
+    return out
+
+
 def page_url(vod, slug=None):
     """A URL yt-dlp understands, for the lanes that still cut with yt-dlp (rough episodes, Shorts, thumbnails)."""
     if not is_kick(vod):
