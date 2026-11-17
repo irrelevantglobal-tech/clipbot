@@ -66,7 +66,9 @@ class Ids(unittest.TestCase):
     def test_platform_and_number(self):
         self.assertTrue(source.is_kick("k138370155"))
         self.assertTrue(source.is_kick("kt1795452415"))
-        self.assertFalse(source.is_kick("2925545033"))
+        self.assertFalse(source.is_kick("2925545033"))     # Twitch archive id
+        self.assertTrue(source.is_kick("1794940195"))      # Kick stream start (what Forge sends)
+        self.assertFalse(source.is_kick("555"))            # test ids stay Twitch
         self.assertEqual(source.num("k138370155"), 138370155)
         self.assertEqual(source.num("kt1795452415"), 1795452415)
         self.assertEqual(source.num("2925545033"), 2925545033)
@@ -98,6 +100,7 @@ class KickInfo(unittest.TestCase):
         inf = source.kick_info("kt%d" % started, get=fake_get(vids()))
         self.assertEqual(inf["kick_id"], "k138370155")
         self.assertEqual(inf["vod"], "kt%d" % started)       # the pipeline keeps ITS id
+        self.assertEqual(source.kick_info(str(int(started)), get=fake_get(vids()))["kick_id"], "k138370155")   # plain digits
 
     def test_start_time_too_far_from_any_stream_refuses(self):
         far = source._unix("2026-11-17T12:00:00Z")

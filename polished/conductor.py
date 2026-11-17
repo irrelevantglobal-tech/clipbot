@@ -680,7 +680,9 @@ def main():
         total = _s[-1][0] + _s[-1][1]
     lo, hi = a.lo, min(a.hi or total, total)
     man = {"vod": a.vod, "vod_title": v["title"], "vod_created": v["created"], "series": a.series,
-           "window": [lo, hi], "final": a.final, "polished": True, "episodes": [], "holes": []}
+           "window": [lo, hi], "final": a.final, "polished": True, "episodes": [], "holes": [],
+           # Kick: Forge cannot read the VOD (Cloudflare), so it learns an ended stream's true length from here
+           "vod_total": round(total, 3), "recording": v["recording"]}
     mpath = os.path.join(a.out, "episodes.json")
     t_run = time.time()
     if not a.upload:

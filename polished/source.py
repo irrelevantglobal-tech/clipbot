@@ -1,6 +1,12 @@
-"""Where a VOD lives: Twitch (an id of digits) or Kick: "k<id>" (Kick's own VOD id = its live_stream_id, e.g.
-k138408878) or "kt<unix start>" (the stream's start time, e.g. kt1795452700: what the Forge worker knows, because
-Kick's official API gives started_at but no VOD id, and Cloudflare blocks Workers from Kick's public JSON).
+"""Where a VOD lives: Twitch or Kick.
+
+* Kick, as the pipeline names it: the stream's START TIME in unix seconds, plain digits (e.g. 1794940195). That is
+  what the Forge worker can know (Kick's official API gives started_at but no VOD id, and Cloudflare blocks Workers
+  from Kick's public JSON), and plain digits pass every place that keeps only digits of a VOD id (Forge KV keys,
+  Discord button ids). Told apart from Twitch by range: 1.6e9 <= id < 2e9 (unix time reaches 2e9 in May 2033;
+  Twitch archive ids passed 2.9e9 by Nov 2026 and only grow).
+* Kick, for probes/tests: "k<Kick VOD id>" (= its live_stream_id) or "kt<unix start>".
+* Twitch: any other plain-digit id.
 
 Kick pivot (owner 2026-11-17: the GTA 6 marathon streams on Kick only). The platform travels INSIDE the VOD id, so
 code path picks the right source. Only the RUNNER asks Kick: it resolves the 1080p playlist and hands that URL to the
@@ -33,8 +39,17 @@ UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.3
                     "Chrome/130.0 Safari/537.36", "Accept": "application/json"}
 
 
+KICK_START_MIN, KICK_START_MAX = 1_600_000_000, 2_000_000_000
+
+
 def is_kick(vod):
-    return str(vod).startswith("k")
+    s = str(vod)
+    return s.startswith("k") or (s.isdigit() and KICK_START_MIN <= int(s) < KICK_START_MAX)
+
+
+def _by_start(vod):
+    s = str(vod)
+    return s.startswith("kt") or s.isdigit()
 
 
 def num(vod):
@@ -74,7 +89,7 @@ def kick_videos(slug=None, get=_get):
 def kick_entry(vod, slug=None, get=_get):
     want = num(vod)
     vids = kick_videos(slug, get)
-    if str(vod).startswith("kt"):   # by start time: the nearest stream within START_TOL
+    if _by_start(vod):   # by start time: the nearest stream within START_TOL
         near = [(abs(_unix(v.get("start_time") or v.get("created_at")) - want), i) for i, v in enumerate(vids)]
         near = [x for x in near if x[0] <= START_TOL]
         if near:
