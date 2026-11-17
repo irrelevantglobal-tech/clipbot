@@ -23,9 +23,13 @@ N_GRABS = 8
 
 def grab(vod, t, out):
     tmp = out + ".mp4"
-    subprocess.run(["yt-dlp", "-q", "--no-progress", "-f", render.VOD_FORMAT,
-                    "--download-sections", f"*{t:.1f}-{t + 1.5:.1f}", "-o", tmp, f"https://www.twitch.tv/videos/{vod}"],
-                   check=True, timeout=180)
+    from polished import source
+    if source.is_kick(vod):   # Kick (owner 17 Nov): the 1080p segments through polished.fetch, cut exactly
+        source.video_window(vod, t, t + 1.5, tmp)
+    else:
+        subprocess.run(["yt-dlp", "-q", "--no-progress", "-f", render.VOD_FORMAT,
+                        "--download-sections", f"*{t:.1f}-{t + 1.5:.1f}", "-o", tmp, f"https://www.twitch.tv/videos/{vod}"],
+                       check=True, timeout=180)
     render.require_1080(tmp, "thumbnail frame")   # a failure keeps YouTube's own frame (ep_publish.thumbnail)
     subprocess.run(["ffmpeg", "-v", "error", "-y", "-sseof", "-0.5", "-i", tmp, "-frames:v", "1", out], check=True)
     os.remove(tmp)

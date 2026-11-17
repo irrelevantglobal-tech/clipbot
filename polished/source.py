@@ -208,7 +208,9 @@ def video_window(vod, a, b, out, ff="ffmpeg"):
     ts = out + ".src.ts"
     f = fetch.fetch(vod, a, b, ts)
     try:
-        subprocess.run([ff, "-v", "error", "-y", "-ss", "%.3f" % (a - f["origin"]), "-i", ts, "-t", "%.3f" % (b - a),
+        # -ss AFTER -i (decode, then drop): an input seek into IVS segments can lose the video stream on short cuts
+        # (17 Nov: a 1.5 s thumbnail cut came out audio-only); decoding <= one segment first costs a second at most
+        subprocess.run([ff, "-v", "error", "-y", "-i", ts, "-ss", "%.3f" % (a - f["origin"]), "-t", "%.3f" % (b - a),
                         "-c:v", "libx264", "-preset", "veryfast", "-crf", "16", "-pix_fmt", "yuv420p",
                         "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", out], check=True)
     finally:
