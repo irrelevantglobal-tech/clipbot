@@ -135,7 +135,7 @@ class KickInfo(unittest.TestCase):
 class ChannelGuard(unittest.TestCase):
     """17 Nov: KICK_SLUG once named a stranger's channel. With KICK_CHANNEL_ID set the slug must BE that channel."""
 
-    def g(self, chan_id, video_channel=27756480):
+    def g(self, chan_id, video_channel=90000001):
         calls = []
 
         def get(url, **kw):
@@ -150,13 +150,13 @@ class ChannelGuard(unittest.TestCase):
 
     def setUp(self):
         source._checked.clear()
-        for k, v in (("KICK_SLUG", "chan"), ("KICK_CHANNEL_ID", "27756480")):
+        for k, v in (("KICK_SLUG", "chan"), ("KICK_CHANNEL_ID", "90000001")):
             p = mock.patch.object(source, k, v)
             p.start()
             self.addCleanup(p.stop)
 
     def test_our_channel_reads(self):
-        g = self.g(27756480)
+        g = self.g(90000001)
         self.assertEqual(source.kick_info("k138370155", get=g)["kick_id"], "k138370155")
         source.kick_info("k138370155", get=g)
         self.assertEqual(sum(1 for c in g.calls if c.endswith("/channels/chan")), 1)   # checked once per run
@@ -175,7 +175,7 @@ class ChannelGuard(unittest.TestCase):
 
     def test_videos_of_another_channel_refuse(self):
         with self.assertRaises(RuntimeError):
-            source.kick_info("k138370155", get=self.g(27756480, video_channel=5))
+            source.kick_info("k138370155", get=self.g(90000001, video_channel=5))
 
 
 class FetchOnKick(unittest.TestCase):
