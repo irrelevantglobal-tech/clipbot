@@ -227,6 +227,8 @@ def main(argv=None):
     global KICK_SLUG
     a.slug = a.slug or KICK_SLUG
     KICK_SLUG = a.slug
+    import polished.source as imported   # `python -m` runs a SECOND copy of this module: fetch.py uses the imported one
+    imported.KICK_SLUG = a.slug
     return _probe(a)
 
 
