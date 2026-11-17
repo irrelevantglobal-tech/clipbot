@@ -37,6 +37,7 @@ KICK_SLUG = os.environ.get("KICK_SLUG") or ""   # THE Kick channel: the KICK_SLU
 KICK_CHANNEL_ID = os.environ.get("KICK_CHANNEL_ID") or ""   # the KICK_CHANNEL_ID secret: the slug MUST be this channel
 KICK_API = "https://kick.com/api/v2/channels/%s/videos"
 KICK_CHANNEL = "https://kick.com/api/v2/channels/%s"
+KICK_CLIPS = "https://kick.com/api/v2/channels/%s/clips?sort=date&time=week"
 _checked = set()
 UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
                     "Chrome/130.0 Safari/537.36", "Accept": "application/json"}
@@ -65,7 +66,11 @@ START_TOL = 180.0   # s: Kick's official started_at vs the public list's start_t
 
 
 def _unix(iso):
-    return datetime.fromisoformat(_utc_iso(iso).replace("Z", "+00:00")).timestamp() if iso else 0.0
+    """Kick times: "2026-11-17 18:45:46" or "2026-11-17T02:37:22.190246Z" (UTC) -> unix seconds; unreadable = 0."""
+    try:
+        return datetime.fromisoformat(_utc_iso(iso).replace("Z", "+00:00")).timestamp() if iso else 0.0
+    except ValueError:
+        return 0.0
 
 
 def _get(url, tries=4, timeout=30, headers=None):
@@ -147,6 +152,31 @@ def master_variants(text, base):
                     "width": int(res.group(1)) if res else 0, "height": int(res.group(2)) if res else 0,
                     "fps": float(fr.group(1)) if fr else 0.0, "bw": int(bw.group(1)) if bw else 0})
     return out
+
+
+def kick_clips(since_unix, slug=None, get=_get, pages=5):
+    """Viewer clips of OUR channel created at or after since_unix, oldest first: [{"id", "title", "created" (unix),
+    "duration", "url" (HLS playlist on clips.kick.com), "creator", "livestream_id"}]. Public ones only."""
+    slug = slug or KICK_SLUG
+    if not slug:
+        raise RuntimeError("no Kick channel: set the KICK_SLUG secret. Nothing read.")
+    check_channel(slug, get)
+    out, cursor = [], ""
+    for _ in range(pages):
+        d = json.loads(get(KICK_CLIPS % slug + ("&cursor=" + cursor if cursor else "")))
+        page = d.get("clips") or []
+        for c in page:
+            if KICK_CHANNEL_ID and str(c.get("channel_id")) != str(KICK_CHANNEL_ID):
+                raise RuntimeError(f"Kick clips for {slug} include channel {c.get('channel_id')}, not ours: refusing")
+            t = _unix(c.get("created_at"))
+            if t >= since_unix and (c.get("privacy") or "public") == "public" and (c.get("clip_url") or c.get("video_url")):
+                out.append({"id": str(c["id"]), "title": c.get("title") or "", "created": t, "duration": float(c.get("duration") or 0),
+                            "url": c.get("clip_url") or c.get("video_url"), "creator": (c.get("creator") or {}).get("username") or "",
+                            "livestream_id": str(c.get("livestream_id") or "")})
+        cursor = str(d.get("nextCursor") or "")
+        if not page or not cursor or min(_unix(c.get("created_at")) for c in page) < since_unix:
+            break
+    return sorted(out, key=lambda c: c["created"])
 
 
 def kick_info(vod, slug=None, get=_get):
