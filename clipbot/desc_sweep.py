@@ -310,4 +310,10 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except RuntimeError as e:   # the pool already spent at the start (07:15 UTC = the end of the quota day): clean stop
+        if "quota" not in str(e).lower():
+            raise
+        print("YouTube quota already spent today: nothing done, the next run picks up here")
+        sys.exit(0)
