@@ -22,6 +22,7 @@ import sys
 from . import common
 
 LIST_COST, UPDATE_COST = 1, 50
+KEEP = [p["login"] for w, p in common.PEOPLE.items() if w != "leon" and p.get("login")]   # other people's Twitch
 SNIPPET_KEYS = ("title", "description", "tags", "categoryId", "defaultLanguage", "defaultAudioLanguage")
 
 
@@ -31,10 +32,21 @@ def pairs():
     if not common.KICK_LIVE or not url:
         raise SystemExit("the Kick address is not cleared (KICK_SLUG + KICK_SLUG_PUBLIC=1), or this is not Leon's lane. "
                          "Nothing changed.")
-    names = list(dict.fromkeys([common.LOGIN, common.LOGIN.lower(), common.BRAND]))
-    out = []
+    # the current handle AND the retired ones (CLIPBOT_ID "legacy": old links still point at the old Twitch handle)
+    legacy = [n for n in common.IDENT.get("legacy", []) if n]
+    names = list(dict.fromkeys([common.LOGIN, common.LOGIN.lower(), common.BRAND, *legacy, *(n.lower() for n in legacy)]))
+    out = [("WATCH ME LIVE ON TWITCH", "WATCH ME LIVE ON KICK"),
+           ("check out the streams on Twitch!", "check out the streams on Kick!"),
+           ("#TwitchStreamer", "#KickStreamer"), ("#twitchstreamer", "#kickstreamer"), ("#twitchclips", "#kickclips"),
+           ("#Twitch ", "#Kick "), ("#twitch ", "#kick "), ("#Twitch\n", "#Kick\n"), ("#twitch\n", "#kick\n")]
     for n in names:
-        out += [(f"WATCH ME LIVE\nTwitch: twitch.tv/{n}", f"WATCH ME LIVE\nKick: {url}"),
+        for sp in ("", "  ", "   "):
+            out += [(f"Twitch:{sp} https://www.twitch.tv/{n}", f"Kick:{sp} https://{url}"),
+                    (f"Twitch:{sp} https://twitch.tv/{n}", f"Kick:{sp} https://{url}"),
+                    (f"Twitch:{sp} twitch.tv/{n}", f"Kick:{sp} {url}")]
+        out += [(f"live on Twitch: https://www.twitch.tv/{n}", f"live on Kick: https://{url}"),
+                (f"live on Twitch: https://twitch.tv/{n}", f"live on Kick: https://{url}"),
+                (f"WATCH ME LIVE\nTwitch: twitch.tv/{n}", f"WATCH ME LIVE\nKick: {url}"),
                 (f"Live on Twitch: https://www.twitch.tv/{n}", f"Live on Kick: https://{url}"),
                 (f"Live on Twitch: https://twitch.tv/{n}", f"Live on Kick: https://{url}"),
                 (f"Live on Twitch: twitch.tv/{n}", f"Live on Kick: {url}"),
@@ -57,7 +69,9 @@ def convert(text, prs):
             return None, f"{a!r} appears {n} times"
         out = out.replace(a, b)
         used.append(a)
-    m = re.search(r"(?i).{0,40}twitch.{0,40}", out)
+    # another streamer's own Twitch link (Glatiar streams on Twitch) is a credit, not Leon's channel: it stays
+    rest = re.sub(r"(?i)(?:https?://)?(?:www\.)?twitch\.tv/(?:" + "|".join(map(re.escape, KEEP)) + r")\b", "", out) if KEEP else out
+    m = re.search(r"(?i).{0,40}twitch.{0,40}", rest)
     if m:
         return None, "other Twitch text left: " + m.group(0).replace("\n", " / ")
     return out, used

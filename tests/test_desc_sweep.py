@@ -27,6 +27,14 @@ class Rules(unittest.TestCase):
         out, _ = D.convert(f"Live on Twitch: https://www.twitch.tv/{L}", self.p)
         self.assertEqual(out, "Live on Kick: https://kick.com/chan")
 
+    def test_retired_handle_ctas_hashtags_and_another_streamers_credit(self):
+        old = _ident.OLD.lower()
+        t = (f"Twitch:   https://www.twitch.tv/{old}\nGlatiar: twitch.tv/glatiar\nWATCH ME LIVE ON TWITCH\n"
+             f"Come hang out live on Twitch: https://twitch.tv/{L}\n#gaming #twitchclips #Twitch #fyp")
+        out, used = D.convert(t, self.p)
+        self.assertEqual(out, "Kick:   https://kick.com/chan\nGlatiar: twitch.tv/glatiar\nWATCH ME LIVE ON KICK\n"
+                              "Come hang out live on Kick: https://kick.com/chan\n#gaming #kickclips #Kick #fyp")
+
     def test_twice_is_skipped_not_guessed(self):
         out, why = D.convert(f"twitch.tv/{L} and again twitch.tv/{L}", self.p)
         self.assertIsNone(out)
