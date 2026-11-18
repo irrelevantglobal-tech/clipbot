@@ -294,10 +294,10 @@ def main(argv=None):
             units += UPDATE_COST
             done.append(v["id"])
         except Exception as e:   # noqa: BLE001 - quota or one bad video: record, and stop on quota
-            failed.append((v["id"], str(e)[:200]))
-            if "quota" in str(e).lower():
-                print("YouTube quota exceeded: stopping")
+            if "quota" in str(e).lower():   # the day's pool is spent (uploads come first): a clean stop, not a failure
+                print("YouTube quota exceeded: stopping cleanly; the next run picks up here")
                 break
+            failed.append((v["id"], str(e)[:200]))
     rep = {"apply": a.apply, "units": units, "to_change": len(todo), "changed": done, "failed": failed,
            "skipped": [{"id": i, "why": w} for i, w in skipped], "titles_with_twitch": titles,
            "comments_changed": com_done, "comments_skipped": [{"id": i, "why": w} for i, w in com_skipped],
