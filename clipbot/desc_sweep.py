@@ -21,7 +21,8 @@ import sys
 
 from . import common
 
-LIST_COST, UPDATE_COST = 1, 50SNIPPET_KEYS = ("title", "description", "tags", "categoryId", "defaultLanguage", "defaultAudioLanguage")
+LIST_COST, UPDATE_COST = 1, 50
+SNIPPET_KEYS =("title", "description", "tags", "categoryId", "defaultLanguage", "defaultAudioLanguage")
 
 
 def _names():
