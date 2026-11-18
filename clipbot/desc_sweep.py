@@ -80,6 +80,16 @@ def convert(text, prs):
     if bare:
         out = re.sub(r"(?m)^Twitch:[ \t]*$", "Kick: " + common.live_url(), out)
         used.append("Twitch: (bare line)")
+    # boss 18 Nov: the old Twitch-VOD archive's source lines go (nothing reads them: the archiver dedupes by its own
+    # state.json, checked). Exact line shapes, each at most once.
+    for name, rx in (("Twitch id line", r"(?m)^Twitch id: \d+[ \t]*\n?"),
+                     ("Original Twitch VOD line", r"(?m)^Original: https?://(?:www\.)?twitch\.tv/videos/\d+[ \t]*\n?")):
+        hits = re.findall(rx, out)
+        if len(hits) > 1:
+            return None, f"{name} appears {len(hits)} times"
+        if hits:
+            out = re.sub(rx, "", out)
+            used.append(name)
     for a, b in prs:
         n = out.count(a)
         if not n:
@@ -93,7 +103,7 @@ def convert(text, prs):
     mine = {n.lower() for n in _names()}
     # ("Glatiar on Twitch: twitch.tv/glatiar" is her credit line: the label goes with her link)
     rest = re.sub(r"(?i)(?:\bon Twitch:\s*)?(?:https?://)?(?:www\.)?twitch\.tv/([A-Za-z0-9_]+)",
-                  lambda m: m.group(0) if m.group(1).lower() in mine else "", out)
+                  lambda m: m.group(0) if m.group(1).lower() in mine | {"videos"} else "", out)   # /videos/ = a Twitch VOD, never a credit
     m = re.search(r"(?i).{0,40}twitch.{0,40}", rest)
     if m:
         return None, "other Twitch text left: " + m.group(0).replace("\n", " / ")
@@ -122,36 +132,63 @@ def videos(ids):
     return out, units
 
 
+# Titles (Leon 18 Nov: "change the titles too"; boss: exact swaps, Twitch -> Kick where it reads naturally). Every
+# Twitch title on the channel is a hashtag form; each token at most once per title, anything else = skipped + listed.
+TITLE_PAIRS = [("#twitchstreamer", "#kickstreamer"), ("#Twitch", "#Kick"), ("#twitch", "#kick")]
+
+
+def convert_title(t):
+    out, used = t or "", []
+    for a, b in TITLE_PAIRS:
+        n = len(re.findall(re.escape(a) + r"(?![A-Za-z0-9_])", out))
+        if n > 1:
+            return None, f"{a!r} appears {n} times in the title"
+        if n:
+            out = re.sub(re.escape(a) + r"(?![A-Za-z0-9_])", b, out)
+            used.append("title " + a)
+    if re.search(r"(?i)twitch", out):
+        return None, "other Twitch text left in the title: " + out
+    if len(out) > 100:
+        return None, "title would be over 100 characters"
+    return out, used
+
+
 def plan(items, prs):
-    """-> (todo [(video, new_snippet, new_localizations, used)], skipped [(id, why)], titles_with_twitch [id])."""
+    """-> (todo [(video, new_snippet, new_localizations, used)], skipped [(id, why)], titles [{id, title, new}])."""
     todo, skipped, titles = [], [], []
+    tw = lambda t: bool(re.search(r"(?i)twitch", t or ""))   # noqa: E731
     for v in sorted(items, key=lambda v: v["snippet"].get("publishedAt", ""), reverse=True):
         sn, loc = v["snippet"], v.get("localizations") or {}
         if sn.get("channelId") != common.CHANNEL_ID:
             skipped.append((v["id"], "not this channel"))
             continue
-        if re.search(r"(?i)twitch", sn.get("title", "")):
-            titles.append({"id": v["id"], "title": sn.get("title", "")})
-        texts = [sn.get("description", "")] + [l.get("description", "") for l in loc.values()]
-        if not any(re.search(r"(?i)twitch", t or "") for t in texts):
+        texts = [sn.get("description", ""), sn.get("title", "")] + [x for l in loc.values() for x in (l.get("description", ""), l.get("title", ""))]
+        if not any(tw(t) for t in texts):
             continue
         new_desc, used = convert(sn.get("description", ""), prs)
         if new_desc is None:
             skipped.append((v["id"], "description: " + used))
             continue
+        new_title, ut = convert_title(sn.get("title", ""))
+        if new_title is None:
+            skipped.append((v["id"], ut))
+            continue
         new_loc, bad = {}, None
         for lang, l in loc.items():
             d, u = convert(l.get("description", ""), prs)
-            if d is None:
-                bad = f"localization {lang}: {u}"
+            lt, ul = convert_title(l.get("title", "")) if l.get("title") else (l.get("title"), [])
+            if d is None or lt is None:
+                bad = f"localization {lang}: {u if d is None else ul}"
                 break
-            new_loc[lang] = dict(l, description=d)
+            new_loc[lang] = dict(l, description=d, **({"title": lt} if l.get("title") else {}))
         if bad:
             skipped.append((v["id"], bad))
             continue
+        if tw(sn.get("title", "")):
+            titles.append({"id": v["id"], "title": sn.get("title", ""), "new": new_title})
         snip = {k: sn[k] for k in SNIPPET_KEYS if k in sn}
-        snip["description"] = new_desc
-        todo.append((v, snip, new_loc, used))
+        snip["description"], snip["title"] = new_desc, new_title
+        todo.append((v, snip, new_loc, used + ut))
     return todo, skipped, titles
 
 
@@ -167,11 +204,36 @@ def own_twitch_comments():
         for t in r.get("items", []):
             c = t["snippet"]["topLevelComment"]["snippet"]
             if (c.get("authorChannelId") or {}).get("value") == common.CHANNEL_ID and re.search(r"(?i)twitch", c.get("textOriginal", "")):
-                out.append({"video": t["snippet"].get("videoId"), "comment": t["id"], "text": c.get("textOriginal", "")[:500]})
+                out.append({"video": t["snippet"].get("videoId"), "comment": t["snippet"]["topLevelComment"]["id"],
+                            "text": c.get("textOriginal", "")[:500], "text_full": c.get("textOriginal", "")})
         tok = r.get("nextPageToken")
         if not tok:
             break
     return out, units
+
+
+def fix_comments(rows, prs, out_dir, budget):
+    """Leon 18 Nov ("I'm not doing all that myself"): edit the text of his OWN comments to Kick (comments.update with
+    the comment-scoped token, 50 units each; a pinned comment stays pinned). Exact pairs; pristine copy first.
+    -> (done [comment ids], skipped [(id, why)], units)."""
+    from . import yt_comments
+    done, skipped, units = [], [], 0
+    for c in rows:
+        new, used = convert(c["text_full"], prs)
+        if new is None or new == c["text_full"]:
+            skipped.append((c["comment"], used if new is None else "nothing to change"))
+            continue
+        if units + UPDATE_COST > budget:
+            skipped.append((c["comment"], "quota cap: next run"))
+            continue
+        with open(os.path.join(out_dir, "backup", "comment_" + c["comment"] + ".json"), "w", encoding="utf-8") as f:
+            json.dump(c, f, ensure_ascii=False, indent=1)
+        common.http("https://www.googleapis.com/youtube/v3/comments?part=snippet",
+                    {"id": c["comment"], "snippet": {"textOriginal": new}}, method="PUT",
+                    headers={"Authorization": "Bearer " + yt_comments.token()})
+        units += UPDATE_COST
+        done.append(c["comment"])
+    return done, skipped, units
 
 
 def update(v, snip, loc):
@@ -200,12 +262,23 @@ def main(argv=None):
         print(f"{len(rows)} of Leon's own comments mention Twitch ({units} units); nothing changed")
         return 0
     os.makedirs(os.path.join(a.out, "backup"), exist_ok=True)
+    units, com_done, com_skipped = 1, [], []
+    if a.apply and os.environ.get("YT_COMMENT_REFRESH_TOKEN"):
+        # Leon's own comments first (13 on 18 Nov, 50 units each): they are the most visible, and few
+        rows, u0 = own_twitch_comments()
+        com_done, com_skipped, u1c = fix_comments(rows, prs, a.out, a.max_units - units - u0 - 40)
+        units += u0 + u1c
+        print(f"comments: {len(com_done)} edited to Kick, {len(com_skipped)} left ({u0 + u1c} units)")
     ids, u1 = uploads()
     items, u2 = videos(ids)
-    units = 1 + u1 + u2
+    units += u1 + u2
     todo, skipped, titles = plan(items, prs)
-    print(f"{len(ids)} uploads read ({units} units); {len(todo)} description(s) to change, {len(skipped)} skipped, "
-          f"{len(titles)} title(s) mention Twitch (not touched)")
+    retitled = {t["id"] for t in titles}
+    todo.sort(key=lambda x: x[0]["id"] not in retitled)   # Leon asked for the titles: those go first, then newest first
+    print(f"{len(ids)} uploads read; {len(todo)} video(s) to change (descriptions, {len(titles)} title(s)), "
+          f"{len(skipped)} skipped; {units} units so far")
+    if a.apply and not todo and not com_done:
+        print("nothing left to change: the sweep is done (remove the schedule from desc-sweep.yml)")
     done, failed = [], []
     for v, snip, loc, used in todo:
         if not a.apply:
@@ -226,6 +299,7 @@ def main(argv=None):
                 break
     rep = {"apply": a.apply, "units": units, "to_change": len(todo), "changed": done, "failed": failed,
            "skipped": [{"id": i, "why": w} for i, w in skipped], "titles_with_twitch": titles,
+           "comments_changed": com_done, "comments_skipped": [{"id": i, "why": w} for i, w in com_skipped],
            "pending": [v["id"] for v, *_ in todo if v["id"] not in done]}
     with open(os.path.join(a.out, "report.json"), "w", encoding="utf-8") as f:
         json.dump(rep, f, ensure_ascii=False, indent=1)

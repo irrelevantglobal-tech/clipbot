@@ -45,6 +45,18 @@ class Rules(unittest.TestCase):
         self.assertIsNone(D.convert(nl.join(["Twitch:", "x", "Twitch:"]), self.p)[0])          # twice: skipped
         self.assertIsNone(D.convert("Twitch: my old setup", self.p)[0])          # not just the label: skipped
 
+    def test_archive_lines_and_titles(self):
+        nl = chr(10)
+        t = nl.join(["Twitch VOD archive.", "", "Streamed: 2026-10-01", "Original: https://www.twitch.tv/videos/2887124546",
+                     "Twitch id: 2887124546", "Duration: 3h"])
+        self.assertEqual(D.convert(t, self.p)[0], nl.join(["Stream VOD archive.", "", "Streamed: 2026-10-01", "Duration: 3h"]))
+        self.assertIsNone(D.convert("see https://www.twitch.tv/videos/123 for the rest", self.p)[0])   # a VOD link is never a credit
+        self.assertEqual(D.convert_title("BB8 Death Ball #shorts #twitch #gg | Brand")[0], "BB8 Death Ball #shorts #kick #gg | Brand")
+        self.assertEqual(D.convert_title("For Those Who Say... | #brand on #Twitch")[0], "For Those Who Say... | #brand on #Kick")
+        self.assertEqual(D.convert_title("RDR3 #rdr2 #Twitch #fyp #twitchstreamer")[0], "RDR3 #rdr2 #Kick #fyp #kickstreamer")
+        self.assertIsNone(D.convert_title("my Twitch week")[0])
+        self.assertIsNone(D.convert_title("#twitch and #twitch")[0])
+
     def test_twice_is_skipped_not_guessed(self):
         out, why = D.convert(f"twitch.tv/{L} and again twitch.tv/{L}", self.p)
         self.assertIsNone(out)
@@ -74,7 +86,7 @@ class Rules(unittest.TestCase):
         self.assertEqual(snip, {"title": "t", "description": "x kick.com/chan", "tags": ["x"], "categoryId": "20"})
         self.assertEqual(loc["en"]["description"], "x kick.com/chan")
         self.assertEqual({i for i, _ in skipped}, {"B", "C"})
-        self.assertEqual([t["id"] for t in titles], ["C"])
+        self.assertEqual(titles, [])                       # C was skipped (its localization has other Twitch text)
 
     def test_refuses_without_a_cleared_kick_address(self):
         with mock.patch.dict(os.environ, {"KICK_SLUG_PUBLIC": "0"}), self.assertRaises(SystemExit):
