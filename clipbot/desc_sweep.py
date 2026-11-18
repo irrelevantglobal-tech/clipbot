@@ -91,7 +91,8 @@ def convert(text, prs):
     # another streamer's own Twitch link (Glatiar, a friend in a co-op) is a credit, not Leon's channel: it stays.
     # Leon's own handles (current + retired) were all turned into Kick above, so any twitch.tv/<name> left is someone else.
     mine = {n.lower() for n in _names()}
-    rest = re.sub(r"(?i)(?:https?://)?(?:www\.)?twitch\.tv/([A-Za-z0-9_]+)",
+    # ("Glatiar on Twitch: twitch.tv/glatiar" is her credit line: the label goes with her link)
+    rest = re.sub(r"(?i)(?:\bon Twitch:\s*)?(?:https?://)?(?:www\.)?twitch\.tv/([A-Za-z0-9_]+)",
                   lambda m: m.group(0) if m.group(1).lower() in mine else "", out)
     m = re.search(r"(?i).{0,40}twitch.{0,40}", rest)
     if m:
