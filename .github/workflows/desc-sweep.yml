@@ -1,0 +1,52 @@
+name: desc-sweep
+# Kick pivot (owner 18 Nov): existing YouTube descriptions on Leon's channel: the Twitch link -> his Kick address
+# (clipbot/desc_sweep.py: exact-match pairs only, anything else skipped and listed). Dry unless apply=true; capped by
+# max_units (the 10k/day pool is shared by every lane). Pristine copies + the report go into an ENCRYPTED release
+# (public repo: private videos' text stays private). Run by hand, one capped run per quota day, until nothing is left.
+on:
+  workflow_dispatch:
+    inputs:
+      apply: {description: "true = change descriptions (false = dry run, ~30 units)", type: boolean, default: false}
+      max_units: {description: "stop before this many quota units (50 per video)", default: "3000"}
+permissions:
+  contents: write   # the encrypted backup/report release
+concurrency:
+  group: desc-sweep
+  cancel-in-progress: false
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      APPLY: ${{ inputs.apply }}
+      MAXU: ${{ inputs.max_units }}
+      CLIPBOT_WHO: leon
+      CLIPBOT_ZIP_KEY: ${{ secrets.CLIPBOT_ZIP_KEY }}
+      CLIPBOT_ID: ${{ secrets.CLIPBOT_ID }}   # channel identity (names live only in this secret: the repo is public)
+      KICK_SLUG: ${{ secrets.KICK_SLUG }}
+      KICK_SLUG_PUBLIC: ${{ vars.KICK_SLUG_PUBLIC }}
+      YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
+      YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
+      YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
+    steps:
+      - name: Check input
+        run: '[[ "$MAXU" =~ ^[0-9]{1,5}$ && "$MAXU" -le 7000 ]] || { echo "max_units must be 0-7000"; exit 1; }'
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -q -r requirements.txt
+      - name: Sweep
+        run: python -m clipbot.desc_sweep --out out --max-units "$MAXU" $([ "$APPLY" = true ] && echo --apply)
+      - name: Keep the pristine copies + report (encrypted release)
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          [ -d out ] || exit 0
+          [ -n "$CLIPBOT_ZIP_KEY" ] || { echo "CLIPBOT_ZIP_KEY missing: refusing to upload unencrypted backups"; exit 1; }
+          NAME="desc-sweep-$GITHUB_RUN_ID"
+          (cd out && zip -q -r "../$NAME.zip" .)
+          openssl enc -aes-256-cbc -pbkdf2 -iter 200000 -salt -pass env:CLIPBOT_ZIP_KEY -in "$NAME.zip" -out "$NAME.zip.enc"
+          gh release create "$NAME" "$NAME.zip.enc" --title "$NAME" --notes "desc-sweep run $GITHUB_RUN_ID (apply=$APPLY): pristine descriptions + report, encrypted."
