@@ -159,7 +159,8 @@ def own_twitch_comments():
     pinned, or pin). Read only: commentThreads.list, 1 unit per 100. -> ([{video, comment, text}], units)."""
     out, tok, units = [], "", 0
     for _ in range(40):
-        r = common.yt("commentThreads", part="snippet", allThreadsRelatedToChannelId=common.CHANNEL_ID, searchTerms="twitch",
+        from . import yt_comments   # the comment-scoped token (YT_COMMENT_REFRESH_TOKEN): the upload token cannot read comments
+        r = yt_comments.api("commentThreads", part="snippet", allThreadsRelatedToChannelId=common.CHANNEL_ID, searchTerms="twitch",
                       maxResults=100, textFormat="plainText", **({"pageToken": tok} if tok else {}))
         units += LIST_COST
         for t in r.get("items", []):

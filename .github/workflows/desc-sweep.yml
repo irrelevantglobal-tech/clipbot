@@ -30,6 +30,7 @@ jobs:
       YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
       YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
       YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
+      YT_COMMENT_REFRESH_TOKEN: ${{ inputs.comments && secrets.YT_COMMENT_REFRESH_TOKEN || '' }}   # comments=true only (read)
     steps:
       - name: Check input
         run: '[[ "$MAXU" =~ ^[0-9]{1,5}$ && "$MAXU" -le 7000 ]] || { echo "max_units must be 0-7000"; exit 1; }'
