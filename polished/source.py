@@ -62,6 +62,7 @@ def num(vod):
     return int(re.sub(r"^kt?", "", str(vod)) or 0)
 
 
+KICK_VOD_CAP_S = 48 * 3600 - 300   # Kick keeps the first 48 h of a stream as the VOD; 5 min margin
 START_TOL = 180.0   # s: Kick's official started_at vs the public list's start_time (same stream: a few s apart)
 
 
@@ -202,7 +203,10 @@ def kick_info(vod, slug=None, get=_get):
     return {"vod": str(vod), "kick_id": "k%s" % v.get("id"), "platform": "kick", "title": v.get("session_title") or "",
             "created": _utc_iso(v.get("start_time") or v.get("created_at")),
             "duration": float(v.get("duration") or 0) / 1000.0,      # ms; 0 while live
-            "recording": bool(v.get("is_live")), "master": master, "variants": variants,
+            # Kick saves only the FIRST 48 h of one stream as its VOD (boss 18 Nov): past that the VOD no longer grows,
+            # so it counts as finished (its true length then reaches Forge) even while the stream itself goes on
+            "recording": bool(v.get("is_live")) and time.time() - _unix(v.get("start_time") or v.get("created_at")) < KICK_VOD_CAP_S,
+            "master": master, "variants": variants,
             "uuid": (v.get("video") or {}).get("uuid") or ""}
 
 

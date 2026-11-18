@@ -112,6 +112,15 @@ class KickInfo(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             source.kick_info("k999", get=fake_get(vids()))
 
+    def test_a_stream_live_past_48h_has_a_finished_vod(self):
+        # boss 18 Nov: Kick saves only the first 48 h of one stream; past that the VOD is over though the stream goes on
+        g = fake_get(vids())
+        start = source._unix("2026-11-17T14:46:55Z")
+        with mock.patch.object(source.time, "time", return_value=start + 47 * 3600):
+            self.assertTrue(source.kick_info("k138370155", get=g)["recording"])
+        with mock.patch.object(source.time, "time", return_value=start + 48 * 3600):
+            self.assertFalse(source.kick_info("k138370155", get=g)["recording"])
+
     def test_ended_stream_has_its_length(self):
         inf = source.kick_info("k138324336", get=fake_get(vids()))
         self.assertFalse(inf["recording"])

@@ -676,7 +676,7 @@ def main():
     run.brand = common.BRAND
     v = source.info(a.vod)          # Twitch (Helix) or Kick (its public channel JSON): title, start, length
     total = v["duration"]
-    if source.is_kick(a.vod) and v["recording"]:   # Kick says duration 0 while live: the playlist has the length
+    if source.is_kick(a.vod) and (v["recording"] or not total):   # Kick says 0 while live (and past its 48 h cap): the playlist has the length
         from polished import fetch as _f
         _s = _f.playlist(source.kick_rendition(a.vod)[0])[0]
         total = _s[-1][0] + _s[-1][1]
