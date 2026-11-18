@@ -45,6 +45,7 @@ def pairs():
            ("It all happens live on Twitch first.", "It all happens live first."),
            ("Clipped live on Twitch.", "Clipped live on stream."),
            ("decided by Twitch chat's vote", "decided by chat's vote"),
+           ("Hit follow on Twitch so you're there for launch night", "Hit follow on Kick so you're there for launch night"),
            # boss 18 Nov: these tags are dropped (exact tokens, with the space before them)
            (" # twitch", ""), (" #twitchaffiliate", ""), (" #twitchtv", ""),
            ("check out the streams on Twitch!", "check out the streams on Kick!"),
