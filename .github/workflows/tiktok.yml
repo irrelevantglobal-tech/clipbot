@@ -35,6 +35,7 @@ jobs:
       CLIPBOT_ID: ${{ secrets.CLIPBOT_ID }}   # channel identity (names live only in this secret: the repo is public)
       KICK_SLUG: ${{ secrets.KICK_SLUG }}   # Kick: the live address in Leon's copy (common.live_url)
       KICK_SLUG_PUBLIC: ${{ vars.KICK_SLUG_PUBLIC }}   # 1 = the address may go in public copy
+      KICK_CHANNEL_ID: ${{ secrets.KICK_CHANNEL_ID }}   # marathon_mode reads the Kick video list: the slug must BE this channel
       CLIPBOT_WORKER: ${{ secrets.CLIPBOT_WORKER }}
       TIKTOK_STATE: ${{ secrets.TIKTOK_STATE }}
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

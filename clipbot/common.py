@@ -290,21 +290,25 @@ def _iso_dur(s):
 
 
 def marathon_mode():
-    """True while a marathon is on or just ended: a 10 h+ archive VOD in the last 72 h (an in-progress
-    stream's archive VOD keeps growing, so a live marathon counts once it passes 10 h). Any Twitch
-    error -> False (the normal 2 a day). Owner only: everyone else is always 2 a day."""
+    """True while a marathon is on or just ended: a 10 h+ stream live now or ended in the last 72 h (a live
+    marathon counts once it passes 10 h). Leon streams on Kick only (18 Nov), so this reads his Kick video list
+    (polished/source.py: KICK_SLUG, checked against KICK_CHANNEL_ID); a stream ON AIR has duration 0 there and counts
+    by its time since start. Any error -> False (the normal 2 a day). Owner only: everyone else is always 2 a day."""
     if WHO != "leon":
         return False
     try:
-        vods = helix(f"videos?user_id={TWITCH_UID}&type=archive&first=5")["data"]
+        from polished import source
+        vids = source.kick_videos()[:5]
     except Exception as e:
         print(f"marathon check failed ({str(e)[:80]}): 2 a day")
         return False
-    now = datetime.now(UTC)
-    for v in vods:
-        d = _iso_dur("PT" + v["duration"].upper())
-        end = datetime.fromisoformat(v["created_at"].replace("Z", "+00:00")) + timedelta(seconds=d)
-        if d >= MARATHON_MIN_S and now - end < timedelta(hours=72):
+    now = time.time()
+    for v in vids:
+        start = source._unix(v.get("start_time") or v.get("created_at"))
+        if not start:
+            continue
+        d = now - start if v.get("is_live") else float(v.get("duration") or 0) / 1000.0   # Kick: ms
+        if d >= MARATHON_MIN_S and now - (start + d) < 72 * 3600:
             return True
     return False
 
