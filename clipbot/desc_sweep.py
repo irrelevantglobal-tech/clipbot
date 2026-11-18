@@ -131,7 +131,7 @@ def plan(items, prs):
             skipped.append((v["id"], "not this channel"))
             continue
         if re.search(r"(?i)twitch", sn.get("title", "")):
-            titles.append(v["id"])
+            titles.append({"id": v["id"], "title": sn.get("title", "")})
         texts = [sn.get("description", "")] + [l.get("description", "") for l in loc.values()]
         if not any(re.search(r"(?i)twitch", t or "") for t in texts):
             continue

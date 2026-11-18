@@ -74,7 +74,7 @@ class Rules(unittest.TestCase):
         self.assertEqual(snip, {"title": "t", "description": "x kick.com/chan", "tags": ["x"], "categoryId": "20"})
         self.assertEqual(loc["en"]["description"], "x kick.com/chan")
         self.assertEqual({i for i, _ in skipped}, {"B", "C"})
-        self.assertEqual(titles, ["C"])
+        self.assertEqual([t["id"] for t in titles], ["C"])
 
     def test_refuses_without_a_cleared_kick_address(self):
         with mock.patch.dict(os.environ, {"KICK_SLUG_PUBLIC": "0"}), self.assertRaises(SystemExit):
