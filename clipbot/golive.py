@@ -25,8 +25,30 @@ def short_title(t):
     return t[:80].rstrip(" -:,")
 
 
+def kick_preview(out, tries=12, wait=30):
+    """Kick pivot (owner 18 Nov): the stream's own Kick thumbnail (webp) -> jpg. Kick makes it a little after go-live."""
+    from PIL import Image
+    from polished import source
+    for _ in range(tries):
+        try:
+            live = source.kick_live()
+            if live and live["thumb"]:
+                raw = out + ".webp"
+                with urllib.request.urlopen(urllib.request.Request(live["thumb"], headers={"User-Agent": "Mozilla/5.0"}), timeout=30) as r:
+                    open(raw, "wb").write(r.read())
+                Image.open(raw).convert("RGB").save(out, "JPEG", quality=92)
+                os.remove(raw)
+                return out
+        except Exception as e:
+            print(f"Kick preview not ready ({str(e)[:80]})")
+        time.sleep(wait)
+    return None
+
+
 def preview(out, tries=12, wait=30):
     """Twitch makes the live preview a minute or two after go-live; until then the URL redirects to a 404 image."""
+    if common.KICK_LIVE:
+        return kick_preview(out, tries, wait)
     url = PREVIEW.format(login=common.LOGIN.lower())
     for _ in range(tries):
         try:
@@ -56,7 +78,8 @@ def card(title, work):
 
 def x_text(title):
     t = short_title(title)
-    return (f"LIVE NOW: {t}\n\n" if t else "LIVE NOW\n\n") + f"https://twitch.tv/{common.LOGIN.lower()}"
+    url = common.live_url()
+    return (f"LIVE NOW: {t}\n\n" if t else "LIVE NOW\n\n") + (f"https://{url.lower()}" if url else common.live_text())
 
 
 def post_x(path, title, dry):
@@ -86,7 +109,12 @@ def main():
     if common.WHO != "leon":
         return
     dry = os.environ.get("GOLIVE_DRY") == "1"
-    s = common.helix(f"streams?user_id={common.TWITCH_UID}").get("data", [])
+    if common.KICK_LIVE:   # Kick pivot (owner 18 Nov): Leon is live on Kick; Twitch is never read
+        from polished import source
+        k = source.kick_live()
+        s = [{"title": k["title"]}] if k else []
+    else:
+        s = common.helix(f"streams?user_id={common.TWITCH_UID}").get("data", [])
     if not s and not dry:
         print("not live (a false go-live edge): nothing posted")
         return

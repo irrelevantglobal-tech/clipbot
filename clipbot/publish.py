@@ -34,7 +34,8 @@ import zipfile
 from . import common, legacy, render
 
 SUFFIX = f" | {common.BRAND}"                      # " | <brand>"
-LIVE = f"Catch the chaos live: https://twitch.tv/{common.LOGIN}"
+LIVE = (f"Catch the chaos live: https://{common.live_url()}" if common.live_url()
+        else f"Catch the chaos live: {common.live_text()}")   # Leon: Kick (owner 18 Nov); Glatiar: Twitch
 HORIZON_H = 24
 
 
@@ -57,8 +58,10 @@ def build_description(it, marker):
     if not desc:
         copy = fetch_copy(it)
         desc, tags = copy.get("description", ""), tags or copy.get("hashtags", [])
-    desc = mask(re.sub(r"https?://(www\.)?kick\.com\S*", "", desc)).strip()
-    if common.LOGIN not in desc.lower():
+    desc = mask(re.sub(r"https?://(www\.)?kick\.com\S*", "", desc)).strip()   # any written-in Kick link goes: ours is LIVE
+    kick_there = common.KICK_LIVE and common.live_url() and common.live_url().lower() in desc.lower()
+    if (common.KICK_LIVE and not kick_there) or (not common.KICK_LIVE and common.LOGIN not in desc.lower()):
+        # Leon (Kick, 18 Nov): his Kick line goes on unless the address is already there (an old queued line rewritten)
         desc = (desc + "\n\n" + LIVE).strip()
     tags = [t for t in dict.fromkeys(t.lower() for t in tags) if re.fullmatch(r"#[a-z0-9_]{2,40}", t)]
     if "#shorts" not in tags:

@@ -117,6 +117,30 @@ CHANNEL_ID = P["channel"]                          # Every upload is gated on it
 TWITCH_UID = P["twitch_uid"]
 LOGIN = P["login"]
 BRAND = P["brand"]
+# Kick pivot (owner 17-18 Nov: "every single system we had for twitch needs to be transfared to kick"): Leon's public
+# copy says Kick, never Twitch. The address comes from the KICK_SLUG secret and goes in once KICK_SLUG_PUBLIC=1 (repo
+# variable: the boss confirmed the slug is his and live); without it the copy names the brand on Kick, never a link.
+# Every other person's lane (Glatiar) stays on Twitch.
+KICK_LIVE = WHO == "leon"
+
+
+def live_url():
+    """'kick.com/<slug>' (Leon) | 'twitch.tv/<login>' (anyone else) | '' (Leon, address not cleared for public copy)."""
+    if not KICK_LIVE:
+        return f"twitch.tv/{LOGIN}"
+    slug = (os.environ.get("KICK_SLUG") or "").strip()
+    return f"kick.com/{slug}" if slug and os.environ.get("KICK_SLUG_PUBLIC") == "1" else ""
+
+
+def live_platform():
+    return "Kick" if KICK_LIVE else "Twitch"
+
+
+def live_text():
+    """A 'watch me live' tail that is always safe to print: the address, or '<Brand> on Kick'."""
+    return live_url() or f"{BRAND} on Kick"
+
+
 WORKER = os.environ.get("CLIPBOT_WORKER", "")        # the approval/queue worker's base URL: a secret, never in the repo
 
 # When things go out (UK local). Owner 2026-10-19: "only 1-2 clips a day... if there's already
@@ -491,7 +515,7 @@ def clip_copy(title, game="", stream_title="", transcript=""):
     if isinstance(r.get("game"), str) and r["game"].strip() and not out["game"]:
         out["game"] = r["game"].strip()[:60]
     if not out["description"]:
-        out["description"] = f"{title}. Catch the chaos live at twitch.tv/{LOGIN}"
+        out["description"] = f"{title}. Catch the chaos live at {live_text()}"
     for k in ("description", "tiktok_hook", "ig_hook"):          # no em dashes in anything public
         out[k] = re.sub(r"\s*[\u2014\u2013]\s*", ", ", out[k]).strip(", ")
     if "#shorts" not in out["hashtags"]:
@@ -516,6 +540,6 @@ def promo_comment(title, key, link=None):
     t = re.sub(r"#\S+", "", title or "").strip().rstrip(".!?,")
     t = t[:1].upper() + t[1:]
     if not t:
-        return f"Still not over this one 😂 Stuff like this happens live all the time: {link or 'twitch.tv/' + LOGIN}"
+        return f"Still not over this one 😂 Stuff like this happens live all the time: {link or live_text()}"
     line = PROMO[zlib.crc32(key.encode()) % len(PROMO)]
-    return line.format(t=t, link=link or f"twitch.tv/{LOGIN}")
+    return line.format(t=t, link=link or live_text())

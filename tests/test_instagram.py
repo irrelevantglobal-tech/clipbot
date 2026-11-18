@@ -97,7 +97,8 @@ class ReelsTest(unittest.TestCase):
         self.run_main(f)
         create = next(c for c in f.calls if c[0] == "http" and c[1].endswith("/42/media") and c[2])
         body = create[2].decode()
-        self.assertIn("Live+on+Twitch%3A+ownerlogin", body)
+        self.assertIn("Live+on+Kick%3A+OwnerBrand", body)            # Kick pivot (owner 18 Nov)
+        self.assertNotIn("witch", body)
         for filler in ("%23reels", "%23fyp", "%23gaming+", "%23gaming%0A"):
             self.assertNotIn(filler, body)
         self.assertIn("%23ownerlogin", body)
@@ -106,7 +107,8 @@ class ReelsTest(unittest.TestCase):
 
     def test_approved_ig_caption_is_used_verbatim(self):
         it = dict(item(1, 1), ig_caption="POV: you trust me with petrol\n\nLive on Twitch: ownerlogin\n\n#somegame #ownerlogin")
-        self.assertEqual(instagram.caption_for(it), it["ig_caption"])
+        # verbatim, except an approved-before-the-pivot Twitch line goes out as Kick (owner 18 Nov)
+        self.assertEqual(instagram.caption_for(it), "POV: you trust me with petrol\n\nLive on Kick: OwnerBrand\n\n#somegame #ownerlogin")
 
     def test_old_clip_gets_fresh_ig_copy_from_its_transcript(self):
         import json as _json
@@ -126,7 +128,7 @@ class ReelsTest(unittest.TestCase):
         finally:
             common.worker = saved
         self.assertEqual(seen["payload"]["transcript"], "did I just drink the gas")
-        self.assertEqual(cap, "Who let me near the petrol can?\n\nLive on Twitch: ownerlogin\n\n#somegame #petrolstation #carfail #ownerlogin")
+        self.assertEqual(cap, "Who let me near the petrol can?\n\nLive on Kick: OwnerBrand\n\n#somegame #petrolstation #carfail #ownerlogin")
 
     def test_duplicate_caption_is_not_reposted(self):
         cap = instagram.caption_for(item(1, 1))

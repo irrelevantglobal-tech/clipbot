@@ -669,7 +669,9 @@ def main():
     a = ap.parse_args()
     from clipbot import common, episodes
     run = Run(a)
-    run.ident = {"brand": common.BRAND, "login": common.LOGIN,
+    # the stings' channel line: Leon = Kick (owner 18 Nov: "kick.com/<slug>", or LIVE ON KICK until the address is
+    # cleared for public copy); anyone else = their Twitch login, as before
+    run.ident = {"brand": common.BRAND, "login": (common.live_url() or "LIVE ON KICK") if common.KICK_LIVE else common.LOGIN,
                  "retired": [n for n in common.IDENT.get("legacy", []) if n]}   # the stings refuse these names
     run.brand = common.BRAND
     v = source.info(a.vod)          # Twitch (Helix) or Kick (its public channel JSON): title, start, length

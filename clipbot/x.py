@@ -77,10 +77,10 @@ def tags_for(it):
 
 def x_text(it):
     title = publish.mask(legacy.fix(it["title"]).strip())
-    link = f"https://twitch.tv/{common.LOGIN}"
+    link = f"https://{common.live_url()}" if common.live_url() else common.live_text()
     tags = tags_for(it)
     while True:
-        tail = f"\n\nLive on Twitch: {link}" + (f"\n\n{' '.join(tags)}" if tags else "")
+        tail = f"\n\nLive on {common.live_platform()}: {link}" + (f"\n\n{' '.join(tags)}" if tags else "")
         room = LIMIT - (len(tail) - len(link) + URL_LEN)
         if len(title) <= room or not tags:
             break

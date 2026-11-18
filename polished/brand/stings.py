@@ -107,7 +107,8 @@ def setup(game, brand, login, out, retired=None):
     tag = "".join(c for c in game.lower() if c.isalnum()) or "game"
     ws.OUT = out
     ws.BRAND_TEXT = brand.upper()
-    ws.TWITCH_TEXT = "TWITCH.TV/" + login.upper()
+    # login = a channel login (Twitch, as before) or a full address (Kick pivot 18 Nov: "kick.com/<slug>", from conductor)
+    ws.TWITCH_TEXT = login.upper() if ("." in login or " " in login) else "TWITCH.TV/" + login.upper()
     ws.LOGO = wordmark_png(game, os.path.join(out, "_wordmark_%s.png" % tag))
     return tag
 

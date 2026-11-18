@@ -25,6 +25,8 @@ jobs:
       TWITCH_CLIENT_SECRET: ${{ secrets.TWITCH_CLIENT_SECRET }}
       CLIPBOT_TOKEN: ${{ secrets.CLIPBOT_TOKEN }}
       CLIPBOT_ID: ${{ secrets.CLIPBOT_ID }}   # channel identity (names live only in this secret: the repo is public)
+      KICK_SLUG: ${{ secrets.KICK_SLUG }}   # Kick: the live address in Leon's copy (common.live_url)
+      KICK_SLUG_PUBLIC: ${{ vars.KICK_SLUG_PUBLIC }}   # 1 = the address may go in public copy
       CLIPBOT_WORKER: ${{ secrets.CLIPBOT_WORKER }}
     steps:
       - name: Check input

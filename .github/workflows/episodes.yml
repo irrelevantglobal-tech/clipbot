@@ -79,6 +79,7 @@ jobs:
       TWITCH_CLIENT_ID: ${{ secrets.TWITCH_CLIENT_ID }}
       TWITCH_CLIENT_SECRET: ${{ secrets.TWITCH_CLIENT_SECRET }}
       CLIPBOT_ID: ${{ secrets.CLIPBOT_ID }}
+      KICK_SLUG_PUBLIC: ${{ vars.KICK_SLUG_PUBLIC }}   # 1 = the address may go in public copy
       KICK_SLUG: ${{ secrets.KICK_SLUG }}   # Kick VODs (k.../kt...): polished/source.py
       KICK_CHANNEL_ID: ${{ secrets.KICK_CHANNEL_ID }}   # the slug must BE this channel, or nothing is read
       CLIPBOT_WORKER: ${{ secrets.CLIPBOT_WORKER }}

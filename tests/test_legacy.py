@@ -4,6 +4,7 @@ import importlib
 import os
 import sys
 import unittest
+from unittest import mock
 
 OLD = "OldName"          # built in two halves so the repo-wide old-name grep stays clean
 
@@ -26,7 +27,11 @@ class LegacyOwner(unittest.TestCase):
     def test_fix_keeps_case_shape(self):
         f = self.legacy.fix
         self.assertEqual(f(f"Panic | {OLD}"), "Panic | OwnerBrand")
-        self.assertEqual(f(f"twitch.tv/{OLD.lower()} #{OLD.lower()}"), "twitch.tv/ownerlogin #ownerlogin")
+        self.assertEqual(f(f"twitch.tv/{OLD.lower()} #{OLD.lower()}"), "OwnerBrand on Kick #ownerlogin")   # Kick pivot
+        with mock.patch.dict(os.environ, {"KICK_SLUG": "chan", "KICK_SLUG_PUBLIC": "1"}):
+            self.assertEqual(f("watch https://www.twitch.tv/ownerlogin #twitchstreamer on Twitch"),
+                             "watch https://kick.com/chan #kickstreamer on Kick")
+            self.assertEqual(f("twitch.tv/ownerlogin"), "kick.com/chan")
         self.assertEqual(f(OLD.upper()), "OWNERBRAND")
         self.assertEqual(f(""), "")
         self.assertIsNone(f(None))

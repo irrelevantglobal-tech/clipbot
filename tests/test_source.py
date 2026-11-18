@@ -178,6 +178,16 @@ class ChannelGuard(unittest.TestCase):
             source.kick_info("k138370155", get=self.g(90000001, video_channel=5))
 
 
+class KickLive(unittest.TestCase):
+    def test_live_and_offline(self):
+        with mock.patch.object(source, "KICK_SLUG", "chan"), mock.patch.object(source, "KICK_CHANNEL_ID", ""):
+            on = lambda url, **kw: json.dumps({"data": {"session_title": "GTA 6 DAY 1", "created_at": "2026-11-18T23:00:12.000000Z",
+                                                        "thumbnail": {"src": "https://images.kick.com/t/720.webp"}}}).encode()
+            k = source.kick_live(get=on)
+            self.assertEqual((k["title"], k["thumb"]), ("GTA 6 DAY 1", "https://images.kick.com/t/720.webp"))
+            self.assertIsNone(source.kick_live(get=lambda url, **kw: b'{"data": null}'))
+
+
 class FetchOnKick(unittest.TestCase):
     def test_recording_comes_from_the_api_not_the_endlist(self):
         segs, rec = None, None

@@ -11,6 +11,7 @@
 import _ident  # noqa: F401  (sets CLIPBOT_ID before clipbot is imported)
 import contextlib
 import io
+import os
 import unittest
 from datetime import datetime
 from unittest import mock
@@ -179,7 +180,12 @@ class Copy(unittest.TestCase):
 
     def test_description_names_the_channel_and_only_known_handles(self):
         d = E.description_for("What happened.", ["#GTA6"], "clipbot:ep:1:0")
-        self.assertIn(f"twitch.tv/{_ident.LOGIN}", d)
+        self.assertIn("WATCH ME LIVE\nKick: ", d)                       # Kick pivot (owner 18 Nov): never Twitch
+        self.assertNotIn("twitch", d.lower())
+        with mock.patch.dict(os.environ, {"KICK_SLUG": "chan", "KICK_SLUG_PUBLIC": "1"}):
+            d2 = E.description_for("What happened.", ["#GTA6"], "clipbot:ep:1:0")
+            self.assertIn("Kick: kick.com/chan", d2)
+            self.assertEqual(E.check_meta("GTA 6 Part 1", d2), [])
         self.assertIn(f"Instagram: @{_ident.IG}", d)
         self.assertNotIn("TikTok", d)                                 # not in the identity, so left out
         self.assertNotIn("YouTube: @", d)
@@ -189,7 +195,8 @@ class Copy(unittest.TestCase):
     def test_rules_catch_a_retired_name_a_kick_link_and_a_dash(self):
         ok = E.description_for("Fine.", [], "clipbot:ep:1:0")
         self.assertTrue(E.check_meta("GTA 6 Part 1", ok.replace("Fine.", f"Watch {_ident.OLD} live.")))
-        self.assertIn("kick.com link", E.check_meta("GTA 6 Part 1", ok + " kick.com/x"))
+        self.assertNotIn("kick.com link", E.check_meta("GTA 6 Part 1", ok + " kick.com/x"))   # Leon's live link IS Kick now
+        self.assertTrue(any("links Twitch" in p for p in E.check_meta("GTA 6 Part 1", ok + " https://twitch.tv/x")))
         self.assertIn("em dash", E.check_meta("GTA 6 Part 1 — x", ok))
         self.assertIn("no channel name in description", E.check_meta("GTA 6 Part 1", "nothing here"))
 

@@ -334,7 +334,9 @@ def join_preview(path, spans, out, around=6.0):
 # ---------------- metadata ----------------
 
 BANNED = [
-    (re.compile(r"(?i)kick\.com"), "kick.com link"),
+    # 29 Oct "no Kick link" (Kick was dropped) is superseded for Leon by the Kick pivot (owner 18 Nov): his live link IS
+    # Kick. It still holds for anyone else's lane.
+    (re.compile(r"(?i)kick\.com") if not common.KICK_LIVE else re.compile(r"(?!x)x"), "kick.com link"),
     (re.compile(r"(?i)\b(language warning|contains swearing|strong language|swearing warning)\b"), "language warning"),
     (re.compile(r"(?i)\b\d+\s*(?:part|episode)s?\s+(?:in )?total\b|\ball\s+\d+\s+parts\b"), "total part count"),
     (re.compile("—"), "em dash"),
@@ -343,7 +345,7 @@ def footer():
     """Names come from the channel identity (common.IDENT, repo is public). A handle not in it is left out."""
     socials = [(n, common.IDENT.get(k)) for n, k in (("YouTube", "yt"), ("TikTok", "tiktok"), ("Instagram", "ig"))]
     lines = [f"{n}: @{h}" for n, h in socials if h]
-    return f"WATCH ME LIVE\nTwitch: twitch.tv/{common.LOGIN}" + ("\n\nSOCIALS\n" + "\n".join(lines) if lines else "")
+    return f"WATCH ME LIVE\n{common.live_platform()}: {common.live_url() or common.BRAND}" + ("\n\nSOCIALS\n" + "\n".join(lines) if lines else "")
 
 
 def episode_notes(vod, s, e):
@@ -400,7 +402,8 @@ def check_meta(title, description):
         legacy.check(title, description, where="episode")
     except RuntimeError as e:
         probs.append(str(e))
-    if common.LOGIN.lower() not in description.lower():
+    need = (common.live_url() or common.BRAND) if common.KICK_LIVE else common.LOGIN   # Leon: his Kick address (18 Nov)
+    if need.lower() not in description.lower():
         probs.append("no channel name in description")
     if len(title) > 100:
         probs.append(f"title {len(title)} chars")

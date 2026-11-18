@@ -23,7 +23,7 @@ from datetime import datetime, timedelta
 from . import common, legacy
 
 WINDOW = timedelta(hours=12)       # only Shorts that went public this recently (covers late cron runs)
-LINK = f"https://www.twitch.tv/{common.LOGIN}"
+LINK = f"https://{common.live_url()}" if common.live_url() else common.live_text()   # Leon: Kick (owner 18 Nov)
 _tok = {}
 
 

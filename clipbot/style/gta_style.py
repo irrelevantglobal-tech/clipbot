@@ -30,7 +30,7 @@ BRAND = _common.BRAND.upper()
 
 
 CONFIG = json.load(open(os.path.join(HERE, 'style.json'), encoding='utf-8'))   # the owner's picks (see _picked)
-CONFIG['end_card']['url'] = f'TWITCH.TV/{_common.LOGIN.upper()}'
+CONFIG['end_card']['url'] = (_common.live_url() or _common.live_text()).upper()   # Leon: KICK.COM/<slug> (owner 18 Nov)
 
 
 def thumb_variant(kind='episode'):
@@ -554,7 +554,7 @@ def episode_story(thumb, out=None, seed=None, series=''):
 
 def live_story(preview, title='', out=None, seed=None):
     """1080x1920 "I'm live" card (owner 2026-11-14): LIVE NOW, the stream's own preview frame, its title, the channel."""
-    return promo_story(preview, 'LIVE NOW', f'TWITCH.TV/{_common.LOGIN.upper()}', out=out, seed=seed, caption=title)
+    return promo_story(preview, 'LIVE NOW', (_common.live_url() or _common.live_text()).upper(), out=out, seed=seed, caption=title)
 
 
 def promo_story(pic_src, head, cta, out=None, seed=None, series='', caption=''):

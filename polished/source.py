@@ -154,6 +154,20 @@ def master_variants(text, base):
     return out
 
 
+def kick_live(slug=None, get=_get):
+    """OUR channel's live stream right now: {"title", "thumb" (image URL or ""), "created" (unix)} or None (offline)."""
+    slug = slug or KICK_SLUG
+    if not slug:
+        raise RuntimeError("no Kick channel: set the KICK_SLUG secret. Nothing read.")
+    check_channel(slug, get)
+    d = json.loads(get(KICK_CHANNEL % slug + "/livestream")).get("data")
+    if not d:
+        return None
+    th = d.get("thumbnail") or {}
+    return {"title": d.get("session_title") or "", "thumb": (th.get("src") or th.get("url") or "") if isinstance(th, dict) else "",
+            "created": _unix(d.get("created_at"))}
+
+
 def kick_clips(since_unix, slug=None, get=_get, pages=5):
     """Viewer clips of OUR channel created at or after since_unix, oldest first: [{"id", "title", "created" (unix),
     "duration", "url" (HLS playlist on clips.kick.com), "creator", "livestream_id"}]. Public ones only."""

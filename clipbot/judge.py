@@ -76,7 +76,7 @@ def prompt(cands, stream_title):
             body = body[:MAX_CHARS] + " ..."
         blocks.append(f"#{i} (stretch is {hi - lo:.0f} s long)\n{body or '(no speech)'}")
     return "\n".join([
-        f'You pick moments from one Twitch livestream to post as YouTube Shorts and TikToks. Stream title: "{stream_title[:150]}".',
+        f'You pick moments from one livestream to post as YouTube Shorts and TikToks. Stream title: "{stream_title[:150]}".',
         "Each candidate is a stretch of the stream's auto-transcript (it mishears some words). The audio mixes the streamer's "
         "microphone with the game, so some lines are the GAME's scripted dialogue (NPCs, cutscenes, radio, phone calls, mission "
         "voice-over), not the streamer. Times in [brackets] are seconds from the start of that stretch.",

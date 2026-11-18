@@ -3,6 +3,7 @@ import os
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from datetime import datetime, timedelta
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -42,7 +43,11 @@ class Promo(unittest.TestCase):
         self.assertEqual(ep_story.x_text(v), "New episode: AC Rogue Part 6 - Get In The Coffin | Brand\n\nhttps://youtu.be/kckE6lelQmg")
         self.assertEqual(golive.short_title("GTA 6 LAUNCH MARATHON | DAY 2 | !discord !merch"), "GTA 6 LAUNCH MARATHON DAY 2")
         self.assertEqual(golive.short_title("big heist night - !sub"), "big heist night")
-        self.assertTrue(golive.x_text("Vice City day 1 | !discord").startswith("LIVE NOW: Vice City day 1\n\nhttps://twitch.tv/"))
+        x = golive.x_text("Vice City day 1 | !discord")                   # Kick pivot (owner 18 Nov): never Twitch
+        self.assertTrue(x.startswith("LIVE NOW: Vice City day 1\n\n"))
+        self.assertNotIn("twitch", x.lower())
+        with mock.patch.dict(os.environ, {"KICK_SLUG": "chan", "KICK_SLUG_PUBLIC": "1"}):
+            self.assertEqual(golive.x_text("Vice City day 1"), "LIVE NOW: Vice City day 1\n\nhttps://kick.com/chan")
 
     def test_live_card_fits(self):
         from PIL import Image

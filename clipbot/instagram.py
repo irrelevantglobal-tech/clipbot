@@ -71,7 +71,8 @@ def login():
 def ig_caption(hook, tags):
     own = "#" + common.LOGIN
     tags = list(dict.fromkeys([*tags, own]))[:5]
-    return f"{hook}\n\nLive on Twitch: {common.LOGIN}\n\n{' '.join(tags)}".strip()[:2200]
+    live = common.live_url() if common.KICK_LIVE else common.LOGIN     # Instagram links nothing: the address as text
+    return f"{hook}\n\nLive on {common.live_platform()}: {live or common.BRAND}\n\n{' '.join(tags)}".strip()[:2200]
 
 
 def caption_for(it, work=None):

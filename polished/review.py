@@ -125,7 +125,7 @@ def main():
     pack = {
         "title": plan["youtube_title"], "description": plan["description"],
         "cold_open": {"render": "0:00-%s" % mmss(cold_len), "words": cold_text},
-        "structure": "cold open 0:00-%s, intro sting %s-%s, body to %s, Twitch outro %s-end" % (
+        "structure": "cold open 0:00-%s, intro sting %s-%s, body to %s, channel outro %s-end" % (
             mmss(cold_len), mmss(cold_len), mmss(cold_len + INTRO_D), mmss(body_end), mmss(body_end)),
         "seams": seam_lines[:80], "n_seams": len(seam_lines),
         "first_words_of_body": " ".join(w for s, e, w in words if keep[0][0] <= s < keep[0][0] + 12),
