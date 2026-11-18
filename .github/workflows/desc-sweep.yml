@@ -5,7 +5,7 @@ name: desc-sweep
 # (public repo: private videos' text stays private). Run by hand, one capped run per quota day, until nothing is left.
 on:
   schedule:
-    - cron: "30 8 * * *"   # boss 18 Nov: daily 08:30 UTC (after the 08:00 UK quota reset), apply, 7000 units; REMOVE when the run says the sweep is done
+    - cron: "15 7 * * *"   # boss 18 Nov: daily 07:15 UTC = the END of each quota day (resets 08:00 UK): only what the uploads left; quota out = clean stop. 7000 max. REMOVE when the run says the sweep is done
   workflow_dispatch:
     inputs:
       apply: {description: "true = change descriptions (false = dry run, ~30 units)", type: boolean, default: false}
