@@ -356,7 +356,9 @@ def outro(game, brand, login, out, retired=None, per_game=None):
     nxt = layer(g("NEXT EPISODE"), 1, 1, SOFT)
     sub = layer(g("SUBSCRIBE"), 1, 1, GREEN)
     catch = layer(g("CATCH THE STREAMS LIVE AT"), 1, 1, SOFT)
-    tw = clean(g(login) if ("." in login or " " in login) else "TWITCH.TV/" + g(login))   # Kick pivot: login may be "kick.com/<slug>"
+    # Kick pivot (boss 18 Nov, QA lane C): login is the conductor's address ("kick.com/<slug>"); a bare login draws
+    # LIVE ON KICK, never a Twitch line
+    tw = clean(g(login) if ("." in login or " " in login) else "LIVE ON KICK")
     twl = layer(g(tw), 2 if width(tw, 2) <= 300 else 1, 1, MINT)
     # the game sits IN the header plate, one mint line under THANKS FOR WATCHING: the same size on every outro, and the
     # scenery right of the end-screen elements stays clear (12 Nov: a loose 3x "GTA 6" fought the lifeguard tower)

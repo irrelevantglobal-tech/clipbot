@@ -33,6 +33,7 @@ class CampStings(unittest.TestCase):
 
     def tearDown(self):
         shutil.rmtree(self.d, ignore_errors=True)
+        shutil.rmtree(self.d + "_k", ignore_errors=True)
 
     def test_intro_contract(self):
         p = camp.intro("The Adventure Begins", "GTA 6", _ident.BRAND, _ident.LOGIN, self.d, [_ident.OLD])
@@ -51,7 +52,12 @@ class CampStings(unittest.TestCase):
         self.assertEqual(int(v["nb_read_frames"]), 1200)              # 20.0 s x 60, the OUTRO_D contract
         self.assertAlmostEqual(dur, 20.0, delta=0.03)
         with open(os.path.join(self.d, "_drawn.json"), encoding="utf-8") as f:
-            self.assertIn("TWITCH.TV/" + _ident.LOGIN.upper(), json.load(f))
+            drawn = json.load(f)
+        self.assertIn("LIVE ON KICK", drawn)                          # a bare login: never a Twitch line (18 Nov)
+        self.assertFalse(any("TWITCH" in str(x).upper() for x in drawn))
+        p = camp.outro("GTA 6", _ident.BRAND, "kick.com/chan", self.d + "_k", [_ident.OLD])
+        with open(os.path.join(self.d + "_k", "_drawn.json"), encoding="utf-8") as f:
+            self.assertIn("KICK.COM/CHAN", json.load(f))
 
     def test_retired_name_refused_everywhere(self):
         old = _ident.OLD

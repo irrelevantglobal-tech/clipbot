@@ -108,7 +108,8 @@ def setup(game, brand, login, out, retired=None):
     ws.OUT = out
     ws.BRAND_TEXT = brand.upper()
     # login = a channel login (Twitch, as before) or a full address (Kick pivot 18 Nov: "kick.com/<slug>", from conductor)
-    ws.TWITCH_TEXT = login.upper() if ("." in login or " " in login) else "TWITCH.TV/" + login.upper()
+    # Kick pivot (boss 18 Nov, QA lane C): never a Twitch line. A bare login (no address) draws LIVE ON KICK.
+    ws.TWITCH_TEXT = login.upper() if ("." in login or " " in login) else "LIVE ON KICK"
     ws.LOGO = wordmark_png(game, os.path.join(out, "_wordmark_%s.png" % tag))
     return tag
 
