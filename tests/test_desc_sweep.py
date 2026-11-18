@@ -44,7 +44,8 @@ class Rules(unittest.TestCase):
         out, why = D.convert(f"we raided someone on Twitch last night. twitch.tv/{L}", self.p)
         self.assertIsNone(out)
         self.assertIn("other Twitch text", why)
-        self.assertIsNone(D.convert("twitch.tv/someoneelse", self.p)[0])
+        self.assertEqual(D.convert("co-op with twitch.tv/someoneelse", self.p)[0], "co-op with twitch.tv/someoneelse")   # a credit stays
+        self.assertEqual(D.convert(f"Twitch:   / {_ident.OLD.lower()}", self.p)[0], "Kick:   kick.com/chan")
 
     def test_no_twitch_is_unchanged(self):
         self.assertEqual(D.convert("nothing here", self.p), ("nothing here", []))
