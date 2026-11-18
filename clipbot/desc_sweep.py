@@ -39,6 +39,14 @@ def pairs():
                          "Nothing changed.")
     names = _names()
     out = [("WATCH ME LIVE ON TWITCH", "WATCH ME LIVE ON KICK"),
+           # boss 18 Nov, approved wordings for the old "Twitch" sentences (historical lines become platform-neutral)
+           ("Twitch VOD archive.", "Stream VOD archive."),
+           ("This whole playthrough runs on Twitch first, cut down for YouTube", "This whole playthrough runs live first, cut down for YouTube"),
+           ("It all happens live on Twitch first.", "It all happens live first."),
+           ("Clipped live on Twitch.", "Clipped live on stream."),
+           ("decided by Twitch chat's vote", "decided by chat's vote"),
+           # boss 18 Nov: these tags are dropped (exact tokens, with the space before them)
+           (" # twitch", ""), (" #twitchaffiliate", ""), (" #twitchtv", ""),
            ("check out the streams on Twitch!", "check out the streams on Kick!"),
            ("#TwitchStreamer", "#KickStreamer"), ("#twitchstreamer", "#kickstreamer"), ("#twitchclips", "#kickclips"),
            ("#Twitch ", "#Kick "), ("#twitch ", "#kick "), ("#Twitch\n", "#Kick\n"), ("#twitch\n", "#kick\n")]
@@ -65,6 +73,13 @@ def pairs():
 def convert(text, prs):
     """-> (new_text, [old strings replaced]) or (None, why). Unchanged text -> (text, [])."""
     out, used = text or "", []
+    # boss 18 Nov: a line that is ONLY the "Twitch:" label (the link long gone) becomes the Kick line; once per text
+    bare = re.findall(r"(?m)^Twitch:[ \t]*$", out)
+    if len(bare) > 1:
+        return None, f"a bare 'Twitch:' line appears {len(bare)} times"
+    if bare:
+        out = re.sub(r"(?m)^Twitch:[ \t]*$", "Kick: " + common.live_url(), out)
+        used.append("Twitch: (bare line)")
     for a, b in prs:
         n = out.count(a)
         if not n:
@@ -139,6 +154,24 @@ def plan(items, prs):
     return todo, skipped, titles
 
 
+def own_twitch_comments():
+    """Leon's OWN comments on his channel that still mention Twitch (pinned ones included: the API cannot say which is
+    pinned, or pin). Read only: commentThreads.list, 1 unit per 100. -> ([{video, comment, text}], units)."""
+    out, tok, units = [], "", 0
+    for _ in range(40):
+        r = common.yt("commentThreads", part="snippet", allThreadsRelatedToChannelId=common.CHANNEL_ID, searchTerms="twitch",
+                      maxResults=100, textFormat="plainText", **({"pageToken": tok} if tok else {}))
+        units += LIST_COST
+        for t in r.get("items", []):
+            c = t["snippet"]["topLevelComment"]["snippet"]
+            if (c.get("authorChannelId") or {}).get("value") == common.CHANNEL_ID and re.search(r"(?i)twitch", c.get("textOriginal", "")):
+                out.append({"video": t["snippet"].get("videoId"), "comment": t["id"], "text": c.get("textOriginal", "")[:500]})
+        tok = r.get("nextPageToken")
+        if not tok:
+            break
+    return out, units
+
+
 def update(v, snip, loc):
     body = {"id": v["id"], "snippet": snip, **({"localizations": loc} if loc else {})}
     part = "snippet,localizations" if loc else "snippet"
@@ -151,11 +184,19 @@ def main(argv=None):
     ap.add_argument("--out", default="out")
     ap.add_argument("--apply", action="store_true")
     ap.add_argument("--max-units", type=int, default=3000)
+    ap.add_argument("--comments", action="store_true", help="read only: list Leon's own comments that mention Twitch")
     a = ap.parse_args(argv)
     if common.WHO != "leon":
         raise SystemExit("Leon's channel only. Nothing changed.")
     prs = pairs()
     common.channel_gate()
+    if a.comments:
+        os.makedirs(a.out, exist_ok=True)
+        rows, units = own_twitch_comments()
+        with open(os.path.join(a.out, "comments.json"), "w", encoding="utf-8") as f:
+            json.dump(rows, f, ensure_ascii=False, indent=1)
+        print(f"{len(rows)} of Leon's own comments mention Twitch ({units} units); nothing changed")
+        return 0
     os.makedirs(os.path.join(a.out, "backup"), exist_ok=True)
     ids, u1 = uploads()
     items, u2 = videos(ids)

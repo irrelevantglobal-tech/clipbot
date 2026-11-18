@@ -8,6 +8,7 @@ on:
     inputs:
       apply: {description: "true = change descriptions (false = dry run, ~30 units)", type: boolean, default: false}
       max_units: {description: "stop before this many quota units (50 per video)", default: "3000"}
+      comments: {description: "read only: list Leon's own comments that mention Twitch (no descriptions touched)", type: boolean, default: false}
 permissions:
   contents: write   # the encrypted backup/report release
 concurrency:
@@ -20,6 +21,7 @@ jobs:
     env:
       APPLY: ${{ inputs.apply }}
       MAXU: ${{ inputs.max_units }}
+      COMMENTS: ${{ inputs.comments }}
       CLIPBOT_WHO: leon
       CLIPBOT_ZIP_KEY: ${{ secrets.CLIPBOT_ZIP_KEY }}
       CLIPBOT_ID: ${{ secrets.CLIPBOT_ID }}   # channel identity (names live only in this secret: the repo is public)
@@ -38,7 +40,7 @@ jobs:
           cache: pip
       - run: pip install -q -r requirements.txt
       - name: Sweep
-        run: python -m clipbot.desc_sweep --out out --max-units "$MAXU" $([ "$APPLY" = true ] && echo --apply)
+        run: python -m clipbot.desc_sweep --out out --max-units "$MAXU" $([ "$COMMENTS" = true ] && echo --comments) $([ "$APPLY" = true ] && [ "$COMMENTS" != true ] && echo --apply)
       - name: Keep the pristine copies + report (encrypted release)
         if: always()
         env:

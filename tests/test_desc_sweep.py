@@ -35,6 +35,16 @@ class Rules(unittest.TestCase):
         self.assertEqual(out, "Kick:   https://kick.com/chan\nGlatiar: twitch.tv/glatiar\nWATCH ME LIVE ON KICK\n"
                               "Come hang out live on Kick: https://kick.com/chan\n#gaming #kickclips #Kick #fyp")
 
+    def test_boss_approved_wordings_tags_and_bare_label(self):
+        nl = chr(10)
+        t = nl.join(["Part 4.", "Twitch VOD archive.", "This whole playthrough runs on Twitch first, cut down for YouTube.",
+                     "It all happens live on Twitch first.", "Twitch:", "#gaming # twitch #fyp #twitchaffiliate #twitchtv"])
+        out, _ = D.convert(t, self.p)
+        self.assertEqual(out, nl.join(["Part 4.", "Stream VOD archive.", "This whole playthrough runs live first, cut down for YouTube.",
+                                       "It all happens live first.", "Kick: kick.com/chan", "#gaming #fyp"]))
+        self.assertIsNone(D.convert(nl.join(["Twitch:", "x", "Twitch:"]), self.p)[0])          # twice: skipped
+        self.assertIsNone(D.convert("Twitch: my old setup", self.p)[0])          # not just the label: skipped
+
     def test_twice_is_skipped_not_guessed(self):
         out, why = D.convert(f"twitch.tv/{L} and again twitch.tv/{L}", self.p)
         self.assertIsNone(out)
