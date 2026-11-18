@@ -1,0 +1,38 @@
+name: announce
+# One-off launch-night announcements (Kick pivot, 18 Nov): the "TONIGHT on Kick" X post and/or the 2 Instagram Story
+# slides (clipbot/announce.py), read from the encrypted release clips-<batch>. Run by hand only; dry by default.
+on:
+  workflow_dispatch:
+    inputs:
+      batch: {description: "release batch (clips-<batch>) holding announce_x.txt + story*.jpg", required: true}
+      x: {description: "post the X text now", type: boolean, default: false}
+      stories: {description: "post the Instagram Stories now", type: boolean, default: false}
+      dry: {description: "dry run: build everything, post nothing", type: boolean, default: true}
+permissions:
+  contents: read
+jobs:
+  announce:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      BATCH: ${{ inputs.batch }}
+      CLIPBOT_WHO: leon
+      CLIPBOT_ZIP_KEY: ${{ secrets.CLIPBOT_ZIP_KEY }}
+      CLIPBOT_TOKEN: ${{ secrets.CLIPBOT_TOKEN }}
+      CLIPBOT_ID: ${{ secrets.CLIPBOT_ID }}   # channel identity (names live only in this secret: the repo is public)
+      KICK_SLUG: ${{ secrets.KICK_SLUG }}
+      KICK_SLUG_PUBLIC: ${{ vars.KICK_SLUG_PUBLIC }}
+      CLIPBOT_WORKER: ${{ secrets.CLIPBOT_WORKER }}
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      BUFFER_API_KEY: ${{ inputs.x && secrets.BUFFER_API_KEY || '' }}
+    steps:
+      - name: Check input
+        run: '[[ "$BATCH" =~ ^[0-9]{6,14}$ ]] || { echo "bad batch"; exit 1; }'
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -q -r requirements.txt
+      - name: Announce
+        run: python -m clipbot.announce --batch "$BATCH" $([ "${{ inputs.x }}" = true ] && echo --x) $([ "${{ inputs.stories }}" = true ] && echo --stories) $([ "${{ inputs.dry }}" = true ] && echo --dry)
