@@ -250,7 +250,16 @@ def main(argv=None):
     ap.add_argument("--apply", action="store_true")
     ap.add_argument("--max-units", type=int, default=3000)
     ap.add_argument("--comments", action="store_true", help="read only: list Leon's own comments that mention Twitch")
+    ap.add_argument("--status", default="", help="read only: comma video ids -> privacy + scheduled publish time (1 unit)")
     a = ap.parse_args(argv)
+    if a.status:
+        ids = [i for i in a.status.split(",") if re.fullmatch(r"[A-Za-z0-9_-]{11}", i)][:50]
+        for v in common.yt("videos", part="status,snippet", id=",".join(ids)).get("items", []):
+            st = v["status"]
+            mine = v["snippet"].get("channelId") == common.CHANNEL_ID
+            print(f"{v['id']}: {st.get('privacyStatus')} publishAt={st.get('publishAt') or 'none'} upload={st.get('uploadStatus')} "
+                  f"{'(this channel)' if mine else '(NOT this channel)'}")
+        return 0
     if common.WHO != "leon":
         raise SystemExit("Leon's channel only. Nothing changed.")
     prs = pairs()

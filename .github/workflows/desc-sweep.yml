@@ -11,6 +11,7 @@ on:
       apply: {description: "true = change descriptions (false = dry run, ~30 units)", type: boolean, default: false}
       max_units: {description: "stop before this many quota units (50 per video)", default: "3000"}
       comments: {description: "read only: list Leon's own comments that mention Twitch (no descriptions touched)", type: boolean, default: false}
+      status_ids: {description: "read only: comma video ids -> privacy + scheduled time (nothing else runs)", default: ""}
 permissions:
   contents: write   # the encrypted backup/report release
 concurrency:
@@ -24,6 +25,7 @@ jobs:
       APPLY: ${{ github.event_name == 'schedule' || inputs.apply }}
       MAXU: ${{ inputs.max_units || '7000' }}   # boss 18 Nov: up to 7000/day on the sweep, >=3000 left for uploads
       COMMENTS: ${{ inputs.comments }}
+      STATUS_IDS: ${{ inputs.status_ids }}
       CLIPBOT_WHO: leon
       CLIPBOT_ZIP_KEY: ${{ secrets.CLIPBOT_ZIP_KEY }}
       CLIPBOT_ID: ${{ secrets.CLIPBOT_ID }}   # channel identity (names live only in this secret: the repo is public)
@@ -43,7 +45,10 @@ jobs:
           cache: pip
       - run: pip install -q -r requirements.txt
       - name: Sweep
-        run: python -m clipbot.desc_sweep --out out --max-units "$MAXU" $([ "$COMMENTS" = true ] && echo --comments) $([ "$APPLY" = true ] && [ "$COMMENTS" != true ] && echo --apply)
+        run: |
+          [[ -z "$STATUS_IDS" || "$STATUS_IDS" =~ ^[A-Za-z0-9_,-]{11,600}$ ]] || { echo "bad ids"; exit 1; }
+          if [ -n "$STATUS_IDS" ]; then python -m clipbot.desc_sweep --status "$STATUS_IDS"; exit 0; fi
+          python -m clipbot.desc_sweep --out out --max-units "$MAXU" $([ "$COMMENTS" = true ] && echo --comments) $([ "$APPLY" = true ] && [ "$COMMENTS" != true ] && echo --apply)
       - name: Keep the pristine copies + report (encrypted release)
         if: always()
         env:
