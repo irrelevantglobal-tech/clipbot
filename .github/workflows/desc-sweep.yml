@@ -5,7 +5,7 @@ name: desc-sweep
 # (public repo: private videos' text stays private). Run by hand, one capped run per quota day, until nothing is left.
 on:
   schedule:
-    - cron: "30 8 * * *"   # boss 18 Nov: daily 08:30 UTC (after the 08:00 UK quota reset), apply, 3000 units; REMOVE when the run says the sweep is done
+    - cron: "30 8 * * *"   # boss 18 Nov: daily 08:30 UTC (after the 08:00 UK quota reset), apply, 7000 units; REMOVE when the run says the sweep is done
   workflow_dispatch:
     inputs:
       apply: {description: "true = change descriptions (false = dry run, ~30 units)", type: boolean, default: false}
@@ -22,7 +22,7 @@ jobs:
     timeout-minutes: 60
     env:
       APPLY: ${{ github.event_name == 'schedule' || inputs.apply }}
-      MAXU: ${{ inputs.max_units || '3000' }}
+      MAXU: ${{ inputs.max_units || '7000' }}   # boss 18 Nov: up to 7000/day on the sweep, >=3000 left for uploads
       COMMENTS: ${{ inputs.comments }}
       CLIPBOT_WHO: leon
       CLIPBOT_ZIP_KEY: ${{ secrets.CLIPBOT_ZIP_KEY }}
