@@ -266,6 +266,9 @@ def main():
                 done.append(epoch)
                 print(f"{it['id']}: TikTok {item_id} scheduled {common.uk(at)} (caption typed verbatim: {st.get('typed_ok')})")
                 common.worker("/clipbot/ttdone", {"id": it["id"], "item_id": item_id, "at": at.strftime("%Y-%m-%dT%H:%M:%SZ"), "when": common.uk(at)})
+            except publish.SourceGone as e:   # permanent: dropped ONCE, no retry, no alert per item (18 Nov)
+                print(f"{it['id']}: DEAD, its video no longer exists ({str(e)[:160]}); dropped from the TikTok queue")
+                common.worker("/clipbot/ttdone", {"id": it["id"], "at": it["at"], "dup": True})
             except LoginNeeded as e:
                 page.screenshot(path=os.path.join(work, "login.png"))
                 common.worker("/clipbot/failed", {"id": "TikTok", "error": f"{e}. Stopped; log in again: py -m clipbot.tiktok_login"})

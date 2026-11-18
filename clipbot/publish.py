@@ -91,6 +91,11 @@ def decrypt(blob):
     return r.stdout
 
 
+class SourceGone(RuntimeError):
+    """The clip's video no longer exists anywhere (release deleted after 30 days AND the run's artifact expired or the
+    run itself is gone). Permanent: the item can never be posted, so callers drop it once instead of retrying."""
+
+
 def fetch_artifact(run_id, name, dest):
     """Download a batch's clips. Since 2026-10-28 they live as a GitHub Release asset `<name>.zip`
     (tag = name), because artifacts hit the 0.5 GB Actions storage quota and broke every job; older
@@ -112,10 +117,15 @@ def fetch_artifact(run_id, name, dest):
         if "-> 404" not in str(e):
             raise
     if not url:
-        arts = common.http(f"https://api.github.com/repos/{repo}/actions/runs/{run_id}/artifacts", headers=gh)["artifacts"]
+        try:
+            arts = common.http(f"https://api.github.com/repos/{repo}/actions/runs/{run_id}/artifacts", headers=gh)["artifacts"]
+        except RuntimeError as e:
+            if "-> 404" in str(e) or "-> 410" in str(e):
+                raise SourceGone(f"clips {name}: no release asset, and run {run_id} is gone")
+            raise
         art = next((x for x in arts if x["name"] == name and not x["expired"]), None)
         if not art:
-            raise RuntimeError(f"clips {name} (run {run_id}) are gone: no release asset and no artifact")
+            raise SourceGone(f"clips {name} (run {run_id}) are gone: no release asset and no artifact")
         url = art["archive_download_url"]
     opener = urllib.request.build_opener(_NoRedirect)
     try:

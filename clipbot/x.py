@@ -154,6 +154,7 @@ def main():
     work = os.path.abspath("work")
     os.makedirs(work, exist_ok=True)
     posted = failed = 0
+    dead = []
     for it in due:
         if posted >= MAX_PER_RUN:
             break
@@ -186,6 +187,11 @@ def main():
             print(f"{it['id']}: X post {pid} {'(still sending in Buffer)' if link is None else link or 'sent'}")
             if not tell_done(it, pid, link):
                 raise RuntimeError("posted to X but the worker was not told; Buffer's own list stops a repost next run")
+        except publish.SourceGone as e:   # permanent: dropped ONCE, no retry, no alert per item (18 Nov)
+            print(f"{it['id']}: DEAD, its video no longer exists ({str(e)[:160]}); dropped from the X queue")
+            dead.append(it["id"])
+            if not dry:
+                common.worker("/clipbot/xdone", {"id": it["id"], "dup": True})
         except Exception as e:
             failed += 1
             print(f"{it['id']}: FAILED {str(e)[:300]}")
@@ -196,6 +202,12 @@ def main():
         finally:
             if parked and not dry:
                 instagram.unpark([parked])
+    if dead and not dry:   # ONE line for the whole run; the items are gone from the queue, so it never repeats
+        try:
+            common.worker("/clipbot/failed", {"id": "X", "error": f"{len(dead)} old Short(s) dropped from the X queue: their "
+                                              f"video files expired on GitHub ({', '.join(dead)[:200]}). Nothing to do."})
+        except Exception:
+            pass
     if failed:
         raise SystemExit(1)
 

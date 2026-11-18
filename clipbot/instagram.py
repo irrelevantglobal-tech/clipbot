@@ -301,6 +301,7 @@ def main():
     work = os.path.abspath("work")
     os.makedirs(work, exist_ok=True)
     posted = failed = 0
+    dead = []
     for it in due:
         if posted >= MAX_PER_RUN:
             break
@@ -337,6 +338,11 @@ def main():
                 post_carousel(tok, it, work, dry)
             if not told:
                 raise RuntimeError("Reel is up but the worker was not told; the marker comment stops a repost next run")
+        except publish.SourceGone as e:   # permanent: dropped ONCE, no retry, no alert per item (18 Nov)
+            print(f"{it['id']}: DEAD, its video no longer exists ({str(e)[:160]}); dropped from the Reels queue")
+            dead.append(it["id"])
+            if not dry:
+                common.worker("/clipbot/igdone", {"id": it["id"], "dup": True})
         except Exception as e:
             failed += 1
             print(f"{it['id']}: FAILED {str(e)[:300]}")
@@ -344,6 +350,12 @@ def main():
                 common.worker("/clipbot/failed", {"id": f"Reels {it['id']}", "error": str(e)[:300]})
             except Exception:
                 pass
+    if dead and not dry:
+        try:
+            common.worker("/clipbot/failed", {"id": "Reels", "error": f"{len(dead)} old Short(s) dropped from the Reels queue: "
+                                              f"their video files expired on GitHub ({', '.join(dead)[:200]}). Nothing to do."})
+        except Exception:
+            pass
     if failed:
         raise SystemExit(1)
 
