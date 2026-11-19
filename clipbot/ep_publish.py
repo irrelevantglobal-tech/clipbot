@@ -115,7 +115,7 @@ def schedule(it, part, slot, playlist, dry):
     cur = cur[0]
     if cur["snippet"].get("channelId") != common.CHANNEL_ID:
         raise RuntimeError(f"{vid} is not on this channel")
-    if it["marker"] not in cur["snippet"].get("description", ""):
+    if not common.has_marker(cur, it["marker"]):   # description line (older uploads) or the hidden tag
         raise RuntimeError(f"{vid} does not carry {it['marker']}; refusing to touch it")
     st = cur["status"]
     if st.get("privacyStatus") != "private":
@@ -140,7 +140,7 @@ def schedule(it, part, slot, playlist, dry):
     probs = episodes.check_meta(title, desc)
     if probs:
         raise RuntimeError(f"{it['key']}: metadata breaks the rules {probs}")
-    tags = episodes.tags_for(series, part)
+    tags = episodes.tags_marked(episodes.tags_for(series, part), it["marker"])
     print(f"  Part {part}: {vid} -> '{title}' at {common.uk(slot)}")
     if dry:
         return slot, title

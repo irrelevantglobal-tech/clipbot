@@ -393,8 +393,14 @@ def description_for(desc, hashtags, marker):
     body = (desc.strip() + "\n\n" if desc.strip() else "") + footer()
     if hashtags:
         body += "\n\n" + " ".join(hashtags)
-    body += f"\n\n{marker}"
+    if not common.KICK_LIVE:   # Leon (19 Nov copy standard): his marker is a hidden tag (tags_marked), not public text
+        body += f"\n\n{marker}"
     return body
+
+
+def tags_marked(tags, marker):
+    """Episode tags + the hidden idempotency tag (common.marker_tag), so has_marker finds it without the description line."""
+    return list(dict.fromkeys([*tags, common.marker_tag(marker)]))
 
 
 def check_meta(title, description):
@@ -625,7 +631,7 @@ def main():
                 print(f"  ep {i}: {realname.line(rn)}")
                 ep["name_check"] = {"ok": rn["ok"], "frames": rn["frames"], "hits": rn["hits"], "error": rn["error"]}
             try:
-                vid = upload_private(info["file"], title, desc, tags_for(a.series))
+                vid = upload_private(info["file"], title, desc, tags_marked(tags_for(a.series), marker))
             except QuotaOut as qe:
                 # out of YouTube quota: stop cleanly, the next window starts at THIS episode after the reset
                 # (no failed run, no hourly retry DMs); Forge holds the VOD until quota_hold_until

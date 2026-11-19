@@ -48,11 +48,11 @@ def pull(vod, lo, d):
     import io
     import tarfile
     import zipfile
-    zf = zipfile.ZipFile(z)
-    tgz = _openssl(["-d"], zf.read("state.tgz.enc"))
-    tarfile.open(fileobj=io.BytesIO(tgz)).extractall(os.path.join(d, "state"), filter="data")
-    if "manifest.json.enc" in zf.namelist():
-        open(os.path.join(d, "manifest.json"), "wb").write(_openssl(["-d"], zf.read("manifest.json.enc")))
+    with zipfile.ZipFile(z) as zf:   # closed before the remove: Windows refuses to delete an open file
+        tgz = _openssl(["-d"], zf.read("state.tgz.enc"))
+        tarfile.open(fileobj=io.BytesIO(tgz)).extractall(os.path.join(d, "state"), filter="data")
+        if "manifest.json.enc" in zf.namelist():
+            open(os.path.join(d, "manifest.json"), "wb").write(_openssl(["-d"], zf.read("manifest.json.enc")))
     os.remove(z)
     lines = ["# Held window %s from %s" % (vod, lo), ""]
     for h in sorted(glob.glob(os.path.join(d, "state", "plan_*", "hold.json"))):

@@ -571,6 +571,16 @@ def main():
             chosen.append(menu_cands[mi])
         else:
             problems.append("menu_cut id %r not listed, ignored" % (mi,))
+    # Boss 19 Nov (ep 1 of the GTA 6 launch held on a real-name hit inside a settings / Customer Support menu he was
+    # talking over): menus are where the console / account name shows, so with EP_CUT_MENUS=1 EVERY menu stretch inside
+    # the episode goes, talked over or not. A session answer can also force single ids ("menu_force").
+    forced = set(i for i in (choice.get("menu_force") or []) if isinstance(i, int))
+    for mi, m_ in enumerate(menu_cands):
+        if m_ in chosen:
+            continue
+        if mi in forced or (os.environ.get("EP_CUT_MENUS") == "1" and m_[1] > start and m_[0] < end["t"]):
+            chosen.append(m_)
+            problems.append("menu %d cut whatever the speech (menus can show an account name)" % mi)
     if chosen:
         cuts = clear_words(merge(cuts + chosen))
     menu_kept = [m_ for m_ in menu_cands if m_ not in chosen]

@@ -87,6 +87,8 @@ jobs:
       GTA6_GCP_PROJECT: ${{ vars.GTA6_GCP_PROJECT }}
       # Sleep skip (polished/sleepskip.py): "1" = skip GPU analysis of Resting-screen stretches nobody talks over.
       GTA6_SLEEP_SKIP: ${{ vars.GTA6_SLEEP_SKIP }}
+      # "1" = every menu stretch inside an episode is cut, talked over or not (menus can show an account name; 19 Nov)
+      EP_CUT_MENUS: ${{ vars.EP_CUT_MENUS }}
       GITHUB_TOKEN: ${{ github.token }}
       POLISHED_FAULTS: ${{ inputs.faults }}
       POLISHED_DRY: ${{ inputs.upload && '0' || '1' }}

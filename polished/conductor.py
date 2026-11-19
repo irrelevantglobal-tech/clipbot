@@ -948,15 +948,17 @@ def process(run, gpu, an, plans, lo, man, common, episodes):
                 # nothing of Leon's goes up unseen while the PS5 screen can show his real name (19 Nov): fail-closed
                 rn = realname.check(mp4)
                 log(f"  ep {m['i']}: {realname.line(rn)}")
-                m["name_check"] = {"ok": rn["ok"], "frames": rn["frames"], "hits": rn["hits"], "error": rn["error"]}
+                m["name_check"] = {"ok": rn["ok"], "frames": rn["frames"], "hits": rn["hits"], "error": rn["error"],
+                                   "hit_at": rn.get("hit_at", [])}
                 if not rn["ok"]:
+                    at = ", ".join("%d:%02d" % divmod(int(s), 60) for s in rn.get("hit_at", [])[:12])
                     hold = (f"episode {m['i']} (stream time {hm(m['start'])}): real-name check "
-                            f"{'read it in %d frame(s)' % rn['hits'] if rn['hits'] else 'could not read it (' + str(rn['error']) + ')'}; not uploaded")
+                            f"{'read it in %d frame(s) at episode time %s' % (rn['hits'], at) if rn['hits'] else 'could not read it (' + str(rn['error']) + ')'}; not uploaded")
                     break
             if a.upload:
                 title, desc = draft_copy(run, m, episodes)
                 try:
-                    vid = episodes.upload_private(mp4, title, desc, episodes.tags_for(a.series))
+                    vid = episodes.upload_private(mp4, title, desc, episodes.tags_marked(episodes.tags_for(a.series), m["marker"]))
                 except Exception as e:   # noqa: BLE001
                     why = str(e)
                     try:   # QA R7: urllib's message is just "HTTP Error 400"; the reason is in the body

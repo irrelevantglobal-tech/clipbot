@@ -84,6 +84,8 @@ def check(path, sample_s=SAMPLE_S):
         frames = _frames(path, tmp, sample_s)
         texts = _ocr(frames)
         res.update(frames=len(frames), text_frames=sum(1 for t in texts if t.strip()), hits=count_hits(texts, words))
+        # WHERE, never what: the video seconds of each hit frame (+- sample_s), so a hold can be checked by eye
+        res["hit_at"] = [round(i * sample_s, 1) for i, t in enumerate(texts) if any(w in fold(t) for w in words)]
         if not frames:
             res["error"] = "no frames read"
         else:

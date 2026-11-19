@@ -58,6 +58,7 @@ class Guard(unittest.TestCase):
             r = rn.check("login.mp4")
         self.assertFalse(r["ok"])
         self.assertEqual(r["hits"], 1)
+        self.assertEqual(r["hit_at"], [rn.SAMPLE_S])          # frame 2 = one sample in: where, never what
         self.assertNotIn("doelittle", rn.line(r).lower())     # the log line never carries the name
 
     def test_gate_holds_only_that_lane_and_passes_others(self):

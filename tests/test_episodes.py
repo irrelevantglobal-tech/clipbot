@@ -189,7 +189,9 @@ class Copy(unittest.TestCase):
         self.assertIn(f"Instagram: @{_ident.IG}", d)
         self.assertNotIn("TikTok", d)                                 # not in the identity, so left out
         self.assertNotIn("YouTube: @", d)
-        self.assertTrue(d.endswith("clipbot:ep:1:0"))
+        self.assertNotIn("clipbot:", d)                               # 19 Nov: the marker is a hidden tag now
+        self.assertIn(common.marker_tag("clipbot:ep:1:0"), E.tags_marked(E.tags_for("GTA 6", 1), "clipbot:ep:1:0"))
+        self.assertTrue(common.has_marker({"snippet": {"tags": E.tags_marked([], "clipbot:ep:1:0")}}, "clipbot:ep:1:0"))
         self.assertEqual(E.check_meta(E.title_for("GTA 6", 1, "Hook"), d), [])
 
     def test_rules_catch_a_retired_name_a_kick_link_and_a_dash(self):
