@@ -5,6 +5,19 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from clipbot import common, x  # noqa: E402
 
+# the real-name gate reads the picture with tesseract (tests/test_realname.py covers it); here every clip reads clear,
+# for this module only (a module-level swap would leak into test_realname under discover)
+from clipbot import realname as _rn  # noqa: E402
+_REAL_GATE = _rn.gate
+
+
+def setUpModule():
+    _rn.gate = lambda path, item_id, lane: True
+
+
+def tearDownModule():
+    _rn.gate = _REAL_GATE
+
 
 def weight(t):
     link = f"https://twitch.tv/{common.LOGIN}"

@@ -21,7 +21,7 @@ import time
 import urllib.parse
 from datetime import datetime, timedelta
 
-from . import common, legacy, publish, render, tiktok
+from . import common, legacy, publish, realname, render, tiktok
 
 GRAPH = "https://graph.instagram.com/v26.0"   # replaced by the host stored with the token
 MAX_PER_RUN = 2                       # never dump a backlog: the next cron run takes the rest
@@ -312,6 +312,8 @@ def main():
                     common.worker("/clipbot/igdone", {"id": it["id"], "dup": True})
                 continue
             path = small_enough(publish.video_file(it, work), work)
+            if not realname.gate(path, it["id"], "ig"):
+                continue
             caption = caption_for(it, work)
             legacy.check(caption, where=it["id"])
             same = next((m for m in recent if (m.get("caption") or "")[:60] == caption[:60]), None) or posted_marker(tok, it, recent)

@@ -23,7 +23,7 @@ import sys
 import time
 from datetime import datetime, timedelta
 
-from . import common, legacy, publish
+from . import common, legacy, publish, realname
 
 HORIZON_H = 26
 MIN_LEAD = timedelta(minutes=20)          # TikTok refuses anything under 15 min ahead
@@ -237,6 +237,8 @@ def main():
         for it in due:
             try:
                 path = publish.video_file(it, work)
+                if not realname.gate(path, it["id"], "tt"):
+                    continue
                 caption = caption_for(it, work)
                 legacy.check(caption, where=it["id"])
                 at = datetime.fromisoformat(it["at"].replace("Z", "+00:00"))

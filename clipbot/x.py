@@ -20,7 +20,7 @@ import sys
 import time
 from datetime import datetime, timedelta
 
-from . import common, instagram, legacy, publish
+from . import common, instagram, legacy, publish, realname
 
 API = "https://api.buffer.com"
 MAX_PER_RUN = 2
@@ -174,6 +174,8 @@ def main():
                     common.worker("/clipbot/xdone", {"id": it["id"], "post_id": same["id"], "dup": True})
                 continue
             path = instagram.small_enough(publish.video_file(it, work), work)
+            if not realname.gate(path, it["id"], "x"):
+                continue
             if dry:
                 print(f"{it['id']}: DRY, not posted. {os.path.getsize(path) >> 20} MB, text={json.dumps(text, ensure_ascii=False)}")
                 continue

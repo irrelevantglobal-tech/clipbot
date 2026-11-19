@@ -14,6 +14,19 @@ sys.path.insert(0, ROOT)
 os.environ.setdefault("CLIPBOT_TOKEN", "tok")
 from clipbot import common, instagram, publish, tiktok  # noqa: E402
 
+# the real-name gate reads the picture with tesseract (tests/test_realname.py covers it); here every clip reads clear,
+# for this module only (a module-level swap would leak into test_realname under discover)
+from clipbot import realname as _rn  # noqa: E402
+_REAL_GATE = _rn.gate
+
+
+def setUpModule():
+    _rn.gate = lambda path, item_id, lane: True
+
+
+def tearDownModule():
+    _rn.gate = _REAL_GATE
+
 UTC = common.UTC
 
 

@@ -99,3 +99,17 @@ def line(res):
     """Log line: counts only, never the matched text or the terms."""
     return (f"real-name check: {res['frames']} frames, {res['text_frames']} with text, {res['hits']} name hit(s)"
             f"{', ERROR ' + res['error'] if res['error'] else ''} -> {'clear' if res['ok'] else 'HELD'}")
+
+
+def gate(path, item_id, lane):
+    """Social lanes (19 Nov, socials on their own clock): True = post it. Leon's lane only; a hit or an unreadable video
+    takes the clip out of THIS lane's queue (/clipbot/hold, Leon told once) and returns False."""
+    from . import common
+    if common.WHO != "leon":
+        return True
+    res = check(path)
+    print(f"{item_id}: {line(res)}")
+    if res["ok"]:
+        return True
+    common.worker("/clipbot/hold", {"id": item_id, "lane": lane, "reason": line(res), **common.who_fields()})
+    return False

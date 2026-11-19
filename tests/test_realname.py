@@ -60,6 +60,18 @@ class Guard(unittest.TestCase):
         self.assertEqual(r["hits"], 1)
         self.assertNotIn("doelittle", rn.line(r).lower())     # the log line never carries the name
 
+    def test_gate_holds_only_that_lane_and_passes_others(self):
+        from clipbot import common
+        sent = []
+        with mock.patch.object(common, "WHO", "leon"), mock.patch.object(common, "worker", lambda p, b=None: sent.append((p, b)) or {"ok": True}),                 mock.patch.object(rn, "check", return_value={"ok": False, "frames": 15, "text_frames": 9, "hits": 1, "error": None}):
+            self.assertFalse(rn.gate("c.mp4", "vod:1:1", "ig"))
+        self.assertEqual(sent[0][0], "/clipbot/hold")
+        self.assertEqual((sent[0][1]["id"], sent[0][1]["lane"]), ("vod:1:1", "ig"))
+        with mock.patch.object(common, "WHO", "leon"),                 mock.patch.object(rn, "check", return_value={"ok": True, "frames": 15, "text_frames": 9, "hits": 0, "error": None}):
+            self.assertTrue(rn.gate("c.mp4", "vod:1:1", "tt"))
+        with mock.patch.object(common, "WHO", "glatiar"), mock.patch.object(rn, "check", side_effect=AssertionError("not his lane")):
+            self.assertTrue(rn.gate("c.mp4", "x", "tt"))
+
     def test_quota_reset_is_pacific_midnight(self):
         self.assertEqual(episodes.quota_reset(datetime(2026, 11, 19, 5, 30, tzinfo=timezone.utc)).isoformat(), "2026-11-19T08:00:00+00:00")
         self.assertEqual(episodes.quota_reset(datetime(2026, 11, 19, 8, 30, tzinfo=timezone.utc)).isoformat(), "2026-11-20T08:00:00+00:00")

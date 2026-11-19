@@ -27,6 +27,7 @@ jobs:
       CLIPBOT_ID: ${{ secrets.CLIPBOT_ID }}   # channel identity (names live only in this secret: the repo is public)
       KICK_SLUG: ${{ secrets.KICK_SLUG }}   # Kick: the live address in Leon's copy (common.live_url)
       KICK_SLUG_PUBLIC: ${{ vars.KICK_SLUG_PUBLIC }}   # 1 = the address may go in public copy
+      CLIPBOT_REALNAME: ${{ secrets.CLIPBOT_REALNAME }}   # real-name guard terms (clipbot/realname.py): never in this public repo
       CLIPBOT_WORKER: ${{ secrets.CLIPBOT_WORKER }}
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       IG_DRY: ${{ inputs.dry || '0' }}
@@ -67,7 +68,7 @@ jobs:
           cache: pip
       - if: steps.q.outputs.any == '1'
         run: |
-          for i in 1 2 3 4; do sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg && break; echo "apt failed ($i), retrying in 30 s"; sleep 30; done; command -v ffmpeg > /dev/null
+          for i in 1 2 3 4; do sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg tesseract-ocr tesseract-ocr-eng && break; echo "apt failed ($i), retrying in 30 s"; sleep 30; done; command -v ffmpeg > /dev/null
           pip install -q -r requirements.txt
       - name: Post Reels
         if: steps.q.outputs.n != '0'
