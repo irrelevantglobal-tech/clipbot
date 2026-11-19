@@ -525,6 +525,7 @@ def main():
     queue = [(m, m["note"]) for m in marked] + ranked   # crew-marked moments are always offered, as before
     tries = len(marked) + min(len(ranked), a.picks + 4)  # a few spares for cuts that fail the footage checks
 
+    game = vision.game_name(v.get("game") or "") or vision.game_name(v.get("title") or "")
     clips, refused, static, rejected, picked, tried = [], [], [], [], 0, 0
     for c, title in queue[:tries]:
         marked_one = "note" in c
@@ -565,7 +566,7 @@ def main():
         if not marked_one:
             # 19 Nov quality check: LOOK at the cut before offering it (menus / radio wheel / blur / black, a title that
             # is not visibly true, a payoff stranded at the end); the title comes from what is on screen
-            vz = vision.check(raw, title, c["text"], workdir=a.out)
+            vz = vision.check(raw, title, c["text"], workdir=a.out, game=game)
             print(f"vision {c['s'] + base:.0f}s: {vz['verdict']} ({vz['reason'][:120]}) title={vz['title']!r} trim={vz['trim']} ${vz['cost']}")
             if vz["verdict"] == "reject":
                 rejected.append(round(c["s"] + base))
@@ -580,12 +581,16 @@ def main():
                 c["s"], c["e"] = c["s"] + ta, c["s"] + tb
             if vz.get("title"):
                 title = vz["title"]
+        vcopy = vision.copy_for(vz, game, common.BRAND) if vz and vz["verdict"] in ("pass", "trim") else None
         c["why"] = "offered"
         picked += 0 if marked_one else 1
         info = render.render(raw, os.path.join(a.out, f"clip{n}.mp4"), os.path.join(a.out, f"preview{n}.mp4"), hook=title,
                              words=heard)
         # raw{n}.mp4 stays in the artifact so a title edited in Discord can be re-rendered
-        copy = common.clip_copy(title, stream_title=v["title"], transcript=c["text"])
+        # copy: the vision model's, to Leon's 19 Nov standard; the old Workers AI writer only for an unchecked clip
+        copy = {k: x for k, x in vcopy.items() if k != "title"} if vcopy else common.clip_copy(title, stream_title=v["title"], transcript=c["text"])
+        if vcopy:
+            title = vcopy["title"]
         # the signals ride along in the manifest, so later approvals can re-calibrate the floor (judge.py)
         clips.append({"n": n, "start": round(c["s"] + base, 2), "end": round(c["e"] + base, 2), "title": title, "score": c["score"],
                       **({"judge": jd["score"], "kind": jd["kind"], "who": jd["who"], "rank": round(judge.rank(c), 2)} if jd else {}),

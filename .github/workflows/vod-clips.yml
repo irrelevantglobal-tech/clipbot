@@ -27,6 +27,7 @@ concurrency:
   cancel-in-progress: false
 permissions:
   contents: write   # clips are kept as a GitHub Release (artifacts hit the 0.5 GB quota 2026-10-28)
+  id-token: write   # vision gate on Gemini (Vertex): GitHub OIDC -> Google, no stored key (19 Nov)
 jobs:
   find:
     if: ${{ github.event_name == 'workflow_dispatch' || vars.GO == '1' }}
@@ -49,11 +50,20 @@ jobs:
       KICK_CHANNEL_ID: ${{ secrets.KICK_CHANNEL_ID }}   # the slug must BE this channel, or nothing is read
       GTA6_ANTHROPIC_KEY: ${{ secrets.GTA6_ANTHROPIC_KEY }}   # vision check of each machine pick (clipbot/vision.py, Haiku)
       CLIPBOT_VISION_BUDGET: ${{ vars.CLIPBOT_VISION_BUDGET }}   # $ per run for the vision check (unset = 0.05)
+      CLIPBOT_VISION_GEM_BUDGET: ${{ vars.CLIPBOT_VISION_GEM_BUDGET }}   # $ of Gemini per run (unset = 0.60)
+      CLIPBOT_VISION_MODELS: ${{ vars.CLIPBOT_VISION_MODELS }}   # unset = gemini-3.5-flash,gemini-3.5-flash-lite
       CLIPBOT_WORKER: ${{ secrets.CLIPBOT_WORKER }}
     steps:
       - name: Check input
         run: '[[ "$VOD" =~ ^(kt?)?[0-9]{6,14}$ && "$FROM" =~ ^[0-9]+$ && "$TO" =~ ^[0-9]+$ && "$PICKS" =~ ^[1-9]$ && "$CLIPBOT_WHO" =~ ^(leon|glatiar)$ ]] || { echo "bad input"; exit 1; }'
       - uses: actions/checkout@v4
+      - name: Google Cloud sign-in for the vision gate (keyless; a failure only means the Haiku fallback / unchecked cards)
+        if: vars.GTA6_GCP_WIF_PROVIDER != ''
+        continue-on-error: true
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ vars.GTA6_GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GTA6_GCP_SA }}
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"

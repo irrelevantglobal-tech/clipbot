@@ -282,9 +282,21 @@ def recent_uploads(n=50):
     return yt("videos", part="snippet,status,contentDetails", id=",".join(ids)).get("items", [])
 
 
+def marker_tag(marker):
+    """The idempotency marker as a hidden YouTube tag (19 Nov copy standard: no internal codes in public text). Tags are
+    not shown on the watch page; videos.list returns them to us, so "is it already up?" is still asked of YouTube."""
+    import hashlib
+    return "cb" + hashlib.sha1(marker.encode()).hexdigest()[:12]
+
+
+def has_marker(video, marker):
+    sn = video.get("snippet") or {}
+    return marker in (sn.get("description") or "") or marker_tag(marker) in (sn.get("tags") or [])
+
+
 def find_marker(marker, uploads):
     for v in uploads:
-        if marker in v["snippet"].get("description", ""):
+        if has_marker(v, marker):
             return v["id"]
     return None
 

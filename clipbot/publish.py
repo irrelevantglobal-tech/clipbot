@@ -34,8 +34,12 @@ import zipfile
 from . import common, legacy, realname, render
 
 SUFFIX = f" | {common.BRAND}"                      # " | <brand>"
-LIVE = (f"Catch the chaos live: https://{common.live_url()}" if common.live_url()
-        else f"Catch the chaos live: {common.live_text()}")   # Leon: Kick (owner 18 Nov); Glatiar: Twitch
+if common.KICK_LIVE:   # Leon, 19 Nov copy standard (kick-pivot-1117/CLIP-COPY-REVIEW-1119.md)
+    LIVE = (f"Watch me live on Kick \U0001F449 {common.live_url()}" if common.live_url()
+            else f"Watch me live: {common.live_text()}")
+else:                  # Glatiar: Twitch, as before
+    LIVE = (f"Catch the chaos live: https://{common.live_url()}" if common.live_url()
+            else f"Catch the chaos live: {common.live_text()}")
 HORIZON_H = 24
 # fresh YouTube uploads per run, 0 = no cap. Marathon auto-publish (boss 19 Nov): the quota (10k/day, ~1,600 an upload)
 # goes to episodes first, so Shorts get CLIPBOT_MAX_UPLOADS per publish run (repo variable; twice-daily cron).
@@ -67,10 +71,17 @@ def build_description(it, marker):
     if (common.KICK_LIVE and not kick_there) or (not common.KICK_LIVE and common.LOGIN not in desc.lower()):
         # Leon (Kick, 18 Nov): his Kick line goes on unless the address is already there (an old queued line rewritten)
         desc = (desc + "\n\n" + LIVE).strip()
-    tags = [t for t in dict.fromkeys(t.lower() for t in tags) if re.fullmatch(r"#[a-z0-9_]{2,40}", t)]
-    if "#shorts" not in tags:
-        tags.append("#shorts")
-    return f"{desc}\n\n{' '.join(tags[:12])}\n\n{marker}"
+    # CamelCase kept (#GTA6 #GTAVI #TigerRunOver #Shorts #GigglesGhost), duplicates dropped case-insensitively
+    seen, keep = set(), []
+    for t in tags:
+        if re.fullmatch(r"#[A-Za-z0-9_]{2,40}", t) and t.lower() not in seen:
+            seen.add(t.lower())
+            keep.append(t)
+    if "#shorts" not in seen:
+        keep.append("#Shorts")
+    # Leon: the idempotency marker is a hidden tag now (common.marker_tag, 19 Nov copy standard), never public text.
+    # Anyone else's lane (Glatiar) keeps the marker line as before.
+    return f"{desc}\n\n{' '.join(keep[:12])}" + ("" if common.KICK_LIVE else f"\n\n{marker}")
 
 
 def fetch_copy(it):
@@ -208,7 +219,8 @@ def main():
             legacy.check(title, desc, where=it["id"])
             tags = [t for t in (it.get("tags") or []) if isinstance(t, str)][:15] + [common.LOGIN, "shorts"]
             tags = list(dict.fromkeys(t.strip() for t in tags if t.strip()))
-            matches = [v for v in uploads if marker in v["snippet"].get("description", "")]
+            tags.append(common.marker_tag(marker))
+            matches = [v for v in uploads if common.has_marker(v, marker)]
             # a done copy wins over a stuck private one (a once-public video keeps its marker after its fresh re-upload)
             existing = next((v for v in matches if v["status"].get("publishAt") or v["status"]["privacyStatus"] != "private"),
                             matches[0] if matches else None)

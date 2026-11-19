@@ -1,14 +1,18 @@
-"""Vision check for machine picks (boss 19 Nov, after the quality sample: a title invented over light-switching, 17 s of
-a blurred radio wheel). Before a machine pick is offered, a cheap vision model LOOKS at it: one contact sheet of the cut
-(8 frames, time-stamped) + the transcript + the proposed title. It rejects what is mostly menu / HUD / radio wheel / blur /
-black / loading, rejects a title that is not visibly true, and trims a cut whose payoff sits at the very end after dead air.
-The title it returns describes what is ON SCREEN (the transcript only helps), never transcript fragments alone.
+"""Vision gate + copy writer for clips (boss 19 Nov, after the quality sample: a title invented over light-switching, 17 s of
+a blurred radio wheel; Leon's copy standard in kick-pivot-1117/CLIP-COPY-REVIEW-1119.md).
 
-    check(raw_mp4, title, transcript) -> {"verdict": "pass"|"reject"|"trim"|"unchecked", "reason": str,
-                                          "title": str|None, "trim": [start_s, end_s]|None, "cost": float}
+Before a machine pick is offered, a vision model LOOKS at it: one contact sheet of the cut (8 time-stamped frames) + the
+transcript + the proposed title. It rejects what is mostly menu / HUD / radio wheel / blur / black / loading or has no clear
+moment, trims a cut whose payoff sits after dead air, and writes ALL the copy from what is on screen:
+    "GTA 6: <true moment> | <brand>" title, a one-line first-person description, a CamelCase moment tag, a hook line.
 
-"unchecked" (no key, budget, API error, unreadable answer) never auto-publishes: the clip still goes to a human card.
-Model: Haiku via polished.llm (GTA6_ANTHROPIC_KEY, capped by CLIPBOT_VISION_BUDGET per run, default $0.05).
+    check(raw_mp4, title, transcript, game=...) -> {"verdict": "pass"|"reject"|"trim"|"unchecked", "reason", "trim",
+                                                    "moment", "line", "tag", "hook", "title", "cost", "lane"}
+    copy_for(verdict, game, brand) -> the offer's copy fields (description, hashtags, tags, tiktok/ig hook + hashtags)
+
+Models: Gemini on the Vertex lane first (boss 19 Nov: nothing that depends on Claude limits), 3.5 Flash then 3.5 Flash-Lite,
+each call worst-case-checked against CLIPBOT_VISION_GEM_BUDGET per run; Haiku (polished.llm) only if Gemini errors.
+"unchecked" (no credentials, budget, unusable answer) never auto-publishes: the clip still goes to a human card.
 """
 import json
 import os
@@ -18,27 +22,37 @@ import sys
 
 N_FRAMES = 8
 W, H = 480, 270
-_budget = None
+_spent = {"gemini": 0.0, "claude": 0.0}
+MODELS = [m.strip() for m in (os.environ.get("CLIPBOT_VISION_MODELS") or "gemini-3.5-flash,gemini-3.5-flash-lite").split(",")
+          if m.strip()]
+GEM_CAP = float(os.environ.get("CLIPBOT_VISION_GEM_BUDGET") or 0.60)       # $ of Gemini per run (worst-case checked)
+CLAUDE_CAP = float(os.environ.get("CLIPBOT_VISION_BUDGET") or 0.02)        # $ of Haiku per run, fallback only
 
-PROMPT = """You are checking one short gaming clip before it is posted as a YouTube Short / TikTok. The image is a contact
-sheet of the clip: {n} frames left-to-right, top-to-bottom, each stamped with its time in seconds. Length: {dur:.1f} s.
-
+PROMPT = """You are checking one short gaming clip before it is posted as a YouTube Short / TikTok / Reel. The image is a
+contact sheet of the clip: {n} frames left-to-right, top-to-bottom, each stamped with its time in seconds. Length: {dur:.1f} s.
+Game (from the stream): "{game}".
 What the streamer says (auto transcript, may have errors; game dialogue may be mixed in): "{transcript}"
 Proposed title: "{title}"
 
-Decide, from what you SEE first and the words second:
-- reject if most of the frames are a menu, map, inventory, settings, a radio/weapon wheel, a loading or black screen,
-  heavy blur, or a static/pause screen; or if nothing visibly happens worth watching.
-- reject if the proposed title claims something that is not visible on screen (e.g. "blew up my car" with no car or
-  explosion in any frame) AND you cannot write a true title for what is shown.
-- trim if the good part is real but the clip spends most of its length on dead air or menus before or after it: give
-  the start and end second of the part worth keeping (at least 8 s, inside 0..{dur:.1f}).
+Decide from what you SEE first and the words second:
+- reject if most frames are a menu, map, inventory, settings, a radio/weapon wheel, a loading or black screen, heavy blur,
+  or a static/pause screen; or if there is no clear moment worth watching.
+- trim if the good part is real but most of the clip is dead air or menus around it: give start and end seconds of the part
+  worth keeping (at least 8 s, inside 0..{dur:.1f}).
 - otherwise pass.
-Always write a title that is TRUE to what is on screen: what visibly happens, specific (the vehicle, animal, place,
-character), first person where it fits ("I Ran Over A Tiger On The Freeway"), Title Case, max 50 characters,
-no emojis, no hashtags, no swearing, never just a fragment of the transcript.
+Then write the copy (for pass or trim), all of it TRUE to what is visibly on screen, in the streamer's own voice:
+- moment: the title after the game name: what visibly happens, specific (vehicle, animal, place, character), first person
+  where it fits ("I Ran Over A Tiger On The Freeway"), Title Case, max 55 characters, no all-caps words, no third person,
+  no emojis, no swearing, never a fragment of the transcript.
+- line: ONE first-person sentence about the moment for the YouTube description, casual, at most one emoji, no swearing,
+  no content warning.
+- tag: ONE CamelCase hashtag for this moment (e.g. "#TigerRunOver"), max 25 characters.
+- hook: a short caption line for TikTok / Reels / X that makes people watch: a reaction, a quote or a question; max 90
+  characters, at most one emoji, no hashtags, no swearing.
 
-Reply with JSON only: {{"verdict": "pass|reject|trim", "reason": "one short sentence", "title": "...", "trim": [start, end] or null}}"""
+Reply with JSON only:
+{{"verdict": "pass|reject|trim", "reason": "one short sentence", "trim": [start, end] or null,
+  "moment": "...", "line": "...", "tag": "#...", "hook": "..."}}"""
 
 
 def sheet(mp4, out_jpg, dur=None):
@@ -65,19 +79,48 @@ def sheet(mp4, out_jpg, dur=None):
     return dur
 
 
-def parse(text, dur):
-    """The model's JSON -> a checked verdict dict, or None if unusable."""
-    m = re.search(r"\{.*\}", text or "", re.S)
+def _json(text):
+    t = (text or "").strip()
+    t = re.sub(r"^```(?:json)?\s*|\s*```$", "", t)
+    m = re.search(r"\{.*\}", t, re.S)
     if not m:
         return None
-    try:
-        d = json.loads(m.group(0))
-    except ValueError:
+    for cand in (m.group(0), re.sub(r",\s*([}\]])", r"\1", m.group(0))):   # a trailing comma is the usual slip
+        try:
+            return json.loads(cand)
+        except ValueError:
+            continue
+    return None
+
+
+def game_name(hint):
+    """'GTA 6' for any GTA VI hint (category or stream title); another short category name as it is; else ''."""
+    h = str(hint or "").lower()
+    if re.search(r"\bgta\s*(6|vi)\b", h) or ("grand theft auto" in h and re.search(r"\b(vi|6)\b", h)):
+        return "GTA 6"
+    h = str(hint or "").strip()
+    return h if 2 <= len(h) <= 30 else ""
+
+
+def game_tags(game):
+    if game == "GTA 6":
+        return ["#GTA6", "#GTAVI"]
+    t = re.sub(r"[^A-Za-z0-9]", "", game.title() if game.islower() else game)
+    return ["#" + t] if 2 <= len(t) <= 30 else []
+
+
+def _clean(text, n):
+    return re.sub(r"\s+", " ", str(text or "")).strip().strip('"')[:n].rstrip()
+
+
+def parse(text, dur):
+    """The model's JSON -> a checked verdict dict, or None if unusable."""
+    d = _json(text)
+    if not isinstance(d, dict):
         return None
     v = str(d.get("verdict", "")).lower().strip()
     if v not in ("pass", "reject", "trim"):
         return None
-    title = re.sub(r"\s+", " ", str(d.get("title") or "")).strip().strip('"')[:50] or None
     trim = None
     if v == "trim":
         try:
@@ -89,33 +132,88 @@ def parse(text, dur):
             trim = None
         if trim is None:
             v = "pass"                       # an unusable trim range: keep the whole cut, a human still sees the card
-    return {"verdict": v, "reason": str(d.get("reason") or "")[:200], "title": title, "trim": trim}
+    moment = _clean(d.get("moment") or d.get("title"), 55)
+    if moment and moment.upper() == moment and len(moment) > 6:
+        moment = moment.title()             # no all-caps titles
+    tag = _clean(d.get("tag"), 26)
+    tag = ("#" + re.sub(r"[^A-Za-z0-9_]", "", tag.lstrip("#"))) if tag else ""
+    return {"verdict": v, "reason": _clean(d.get("reason"), 200), "trim": trim, "moment": moment or None,
+            "line": _clean(d.get("line"), 220) or None, "tag": tag if len(tag) > 2 else None,
+            "hook": _clean(d.get("hook"), 90) or None}
 
 
-def budget():
-    global _budget
-    if _budget is None:
-        sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        from polished import llm
-        _budget = llm.Budget(float(os.environ.get("CLIPBOT_VISION_BUDGET") or 0.05))
-    return _budget
+def copy_for(vz, game, brand):
+    """Leon's 19 Nov standard from one verdict -> the offer's copy fields (title + YouTube + TikTok + Reels)."""
+    if not vz or not vz.get("moment"):
+        return None
+    tags = game_tags(game)
+    moment_tag = [vz["tag"]] if vz.get("tag") else []
+    brand_tag = "#" + re.sub(r"[^A-Za-z0-9]", "", brand or "")
+    low = list(dict.fromkeys([t.lower() for t in tags + moment_tag] + ["#gaming", brand_tag.lower()]))
+    hook = vz.get("hook") or vz["moment"]
+    return {
+        "title": f"{game}: {vz['moment']}" if game else vz["moment"],
+        "description": vz.get("line") or "",
+        "hashtags": tags + moment_tag + ["#Shorts", brand_tag],
+        "tags": [x for x in [game, "GTA VI" if game == "GTA 6" else "", vz["moment"],
+                             f"{game} funny moments" if game else "funny moments", brand] if x],
+        "game": game,
+        "tiktok_hook": hook, "tiktok_hashtags": low[:5],
+        "ig_hook": hook, "ig_hashtags": low[:5],
+    }
 
 
-def check(raw_mp4, title, transcript, workdir=None):
+def _ask(prompt, jpg):
+    """-> (text, cost, lane). Gemini models in order, each worst-case-checked against GEM_CAP; then Haiku (CLAUDE_CAP)."""
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    errs = []
+    try:
+        from polished import gemini
+        for mid in MODELS:
+            if gemini.price_of(mid) is None:
+                errs.append(f"no price for {mid}")
+                continue
+            worst = gemini.worst_case(mid, prompt, 1, 700)
+            if _spent["gemini"] + worst > GEM_CAP:
+                errs.append(f"gemini cap ${GEM_CAP:.2f} reached")
+                break
+            try:
+                text, usage, finish, ver = gemini.generate("clip-vision-review", prompt, mid, 700, images=[jpg])
+            except gemini.GeminiDry as e:
+                errs.append(f"{mid}: {str(e)[:120]}")
+                continue
+            c = gemini.cost(mid, usage)
+            _spent["gemini"] += c
+            if _json(text) is not None:
+                return text, c, "gemini " + mid
+            errs.append(f"{mid}: answer not JSON")
+    except Exception as e:   # noqa: BLE001
+        errs.append(f"gemini: {type(e).__name__}: {str(e)[:120]}")
+    from polished import llm
+    b = llm.Budget(max(0.0, CLAUDE_CAP - _spent["claude"]))
+    text, c = b.call("clip-vision-check", prompt, model="haiku", max_tokens=700, images=[jpg])
+    _spent["claude"] += c
+    return text, c, "haiku (gemini: " + "; ".join(errs)[:160] + ")"
+
+
+def check(raw_mp4, title, transcript, workdir=None, game=""):
     workdir = workdir or os.path.dirname(os.path.abspath(raw_mp4))
     jpg = os.path.join(workdir, os.path.basename(raw_mp4) + ".sheet.jpg")
-    out = {"verdict": "unchecked", "reason": "", "title": None, "trim": None, "cost": 0.0}
+    out = {"verdict": "unchecked", "reason": "", "trim": None, "moment": None, "line": None, "tag": None, "hook": None,
+           "title": None, "cost": 0.0, "lane": None}
     try:
         dur = sheet(raw_mp4, jpg)
-        prompt = PROMPT.format(n=N_FRAMES, dur=dur, transcript=str(transcript or "")[:1200].replace('"', "'"),
+        prompt = PROMPT.format(n=N_FRAMES, dur=dur, game=str(game or "unknown").replace('"', "'"),
+                               transcript=str(transcript or "")[:1200].replace('"', "'"),
                                title=str(title or "").replace('"', "'"))
-        text, cost = budget().call("clip-vision-check", prompt, model="haiku", max_tokens=400, images=[jpg])
-        out["cost"] = round(cost, 5)
+        text, cost, lane = _ask(prompt, jpg)
+        out.update(cost=round(cost, 5), lane=lane)
         d = parse(text, dur)
         if d is None:
             out["reason"] = "the vision answer was not usable JSON"
         else:
             out.update(d)
+            out["title"] = d.get("moment")
     except Exception as e:   # noqa: BLE001 - unchecked, never auto: a human card still decides
         out["reason"] = f"{type(e).__name__}: {str(e)[:160]}"
     return out
@@ -129,6 +227,6 @@ def trim_file(raw_mp4, a, b, out_mp4):
 
 
 if __name__ == "__main__":
-    # py -m clipbot.vision <clip.mp4> "<title>" "<transcript>"
-    print(json.dumps(check(sys.argv[1], sys.argv[2] if len(sys.argv) > 2 else "", sys.argv[3] if len(sys.argv) > 3 else ""),
-                     ensure_ascii=False))
+    # py -m clipbot.vision <clip.mp4> "<title>" "<transcript>" "<game>"
+    a = sys.argv + ["", "", "", ""]
+    print(json.dumps(check(a[1], a[2], a[3], game=game_name(a[4])), ensure_ascii=False))

@@ -6,6 +6,7 @@ on:
       clips: {description: "batch:n list, e.g. 1795045774-7201:1,1795045774-3601:1", required: true}
 permissions:
   contents: read
+  id-token: write
 jobs:
   probe:
     runs-on: ubuntu-24.04
@@ -20,6 +21,11 @@ jobs:
       - name: Check input
         run: '[[ "$CLIPS" =~ ^[0-9:,-]{3,200}$ ]] || { echo "bad input"; exit 1; }'
       - uses: actions/checkout@v4
+      - uses: google-github-actions/auth@v3
+        continue-on-error: true
+        with:
+          workload_identity_provider: ${{ vars.GTA6_GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GTA6_GCP_SA }}
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"

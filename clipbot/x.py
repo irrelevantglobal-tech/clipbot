@@ -76,7 +76,9 @@ def tags_for(it):
 
 
 def x_text(it):
-    title = publish.mask(legacy.fix(it["title"]).strip())
+    # 19 Nov copy standard: X = the hook line (first line of the TikTok caption) + Kick link + tags; the title if no hook
+    hook = (it.get("tiktok_caption") or "").split("\n")[0].strip()
+    title = publish.mask(legacy.fix(hook if hook and not hook.startswith("#") else it["title"]).strip())
     link = f"https://{common.live_url()}" if common.live_url() else common.live_text()
     tags = tags_for(it)
     while True:

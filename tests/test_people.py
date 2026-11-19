@@ -161,7 +161,7 @@ class OwnerRegression(unittest.TestCase):
         common, publish = load(None)
         self.assertEqual((common.WHO, common.CHANNEL_ID, common.TWITCH_UID), ("leon", OWNER_CH, "4242"))
         self.assertEqual(publish.SUFFIX, " | OwnerBrand")
-        self.assertEqual(publish.LIVE, "Catch the chaos live: OwnerBrand on Kick")   # Kick pivot (owner 18 Nov), no slug set here
+        self.assertEqual(publish.LIVE, "Watch me live: OwnerBrand on Kick")   # 19 Nov copy standard (no slug set here)   # Kick pivot (owner 18 Nov), no slug set here
         self.assertEqual(common.release_name("123-0"), "clips-123-0")
         self.assertEqual(common.who_fields(), {})
 

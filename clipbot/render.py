@@ -143,15 +143,17 @@ def build_ass(words, hook, dur, path):
     ]
     if hook:
         lines.append(f"Dialogue: 1,{ts(0)},{ts(min(2.8, dur))},Hook,,0,0,0,,{{\\fad(120,200)}}{esc(hook.upper())}")
-    # chunks of <=3 words, broken on pauses
+    # Full phrases (19 Nov copy standard: "GET FOR MY" scraps looked broken): words join into a phrase until a pause, the
+    # end of a sentence or 7 words; a phrase of under 3 words is dropped rather than shown as a fragment.
     chunks, cur = [], []
     for w in words:
-        if cur and (len(cur) == 3 or w["s"] - cur[-1]["e"] > 0.6):
+        if cur and (len(cur) == 7 or w["s"] - cur[-1]["e"] > 0.6 or re.search(r"[.?!]$", cur[-1]["w"])):
             chunks.append(cur)
             cur = []
         cur.append(w)
     if cur:
         chunks.append(cur)
+    chunks = [ch for ch in chunks if len(ch) >= 3]
     for ci, ch in enumerate(chunks):
         nxt = chunks[ci + 1][0]["s"] if ci + 1 < len(chunks) else dur
         end_chunk = min(ch[-1]["e"] + 0.35, nxt, dur)
