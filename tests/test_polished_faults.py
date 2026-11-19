@@ -448,6 +448,47 @@ class PlanRetry(unittest.TestCase):
 class FailoverRows(Base):
     """QA 13 Nov: the FAILOVER.md rows that had no test (quota hold, laptop refuses while live, Vast render retry)."""
 
+    def setUp(self):
+        super().setUp()
+        # the real-name guard reads the picture with tesseract (tests/test_realname.py); here the rendered fakes read clear
+        from clipbot import realname
+        p = mock.patch.object(realname, "check", return_value={"ok": True, "frames": 20, "text_frames": 9, "hits": 0, "error": None})
+        p.start()
+        self.addCleanup(p.stop)
+
+    def test_real_name_read_holds_the_episode_and_uploads_nothing(self):
+        from clipbot import realname
+        run = C.Run(SimpleNamespace(state=os.path.join(self.d, "s"), out=os.path.join(self.d, "o"), lane="auto",
+                                    vod="1", upload=True, keep=0, series="GTA 6", answers=""))
+        run.st = C.Status("1", 0, 14400, dry=True)
+        run.brand = "OwnerBrand"
+        man = {"episodes": [], "holes": []}
+        up = mock.Mock(return_value="VID")
+        with mock.patch.object(C, "review", return_value={"verdict": "pass"}), \
+                mock.patch.object(realname, "check", return_value={"ok": False, "frames": 20, "text_frames": 9, "hits": 2, "error": None}), \
+                mock.patch.object(common, "channel_gate"), mock.patch.object(episodes, "marker_on_channel", return_value=""), \
+                mock.patch.object(episodes, "upload_private", up), contextlib.redirect_stdout(io.StringIO()):
+            hold = C.process(run, FakeGpu(self.d, bad=99), {}, plans(3), 0.0, man, common, episodes)
+        self.assertIn("real-name check read it in 2 frame(s)", hold)
+        up.assert_not_called()
+
+    def test_daily_budget_renders_and_uploads_one_then_holds_till_the_reset(self):
+        run = C.Run(SimpleNamespace(state=os.path.join(self.d, "s"), out=os.path.join(self.d, "o"), lane="auto",
+                                    vod="1", upload=True, keep=0, series="GTA 6", answers=""))
+        run.st = C.Status("1", 0, 14400, dry=True)
+        run.brand = "OwnerBrand"
+        man = {"episodes": [], "holes": []}
+        up = mock.Mock(return_value="VID1")
+        with mock.patch.dict(os.environ, {"CLIPBOT_EP_UPLOADS": "1"}), mock.patch.object(C, "review", return_value={"verdict": "pass"}), \
+                mock.patch.object(common, "channel_gate"), mock.patch.object(episodes, "marker_on_channel", return_value=""), \
+                mock.patch.object(episodes, "upload_private", up), contextlib.redirect_stdout(io.StringIO()):
+            hold = C.process(run, FakeGpu(self.d, bad=99), {}, plans(3), 0.0, man, common, episodes)
+        self.assertEqual(up.call_count, 1)
+        self.assertIn("episode budget (1) is used", hold)
+        self.assertTrue(man.get("quota_hold_until", "").endswith("Z"))
+        self.assertEqual([e.get("video") for e in man["episodes"]], ["VID1"])
+        self.assertTrue(man["episodes"][0]["name_check"]["ok"])
+
     def test_spent_youtube_quota_holds_the_window_not_a_crash(self):
         import urllib.error
         run = C.Run(SimpleNamespace(state=os.path.join(self.d, "s"), out=os.path.join(self.d, "o"), lane="auto",

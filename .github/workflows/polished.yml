@@ -90,6 +90,8 @@ jobs:
       GITHUB_TOKEN: ${{ github.token }}
       POLISHED_FAULTS: ${{ inputs.faults }}
       POLISHED_DRY: ${{ inputs.upload && '0' || '1' }}
+      CLIPBOT_REALNAME: ${{ secrets.CLIPBOT_REALNAME }}   # real-name guard terms (clipbot/realname.py): never in this public repo
+      CLIPBOT_EP_UPLOADS: ${{ vars.CLIPBOT_EP_UPLOADS }}   # episode uploads per quota day (Leon 19 Nov: 1); unset = no cap
       STATE_NAME: gta6-state-${{ inputs.vod }}-${{ inputs.from }}
     steps:
       - name: Check input
@@ -109,7 +111,7 @@ jobs:
         run: |
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL || true
           df -h / | tail -1
-      - run: for i in 1 2 3 4; do sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg fonts-dejavu-core && break; echo "apt failed ($i), retrying in 30 s"; sleep 30; done; command -v ffmpeg > /dev/null
+      - run: for i in 1 2 3 4; do sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg fonts-dejavu-core tesseract-ocr tesseract-ocr-eng && break; echo "apt failed ($i), retrying in 30 s"; sleep 30; done; command -v ffmpeg > /dev/null
       - run: pip install -q -r requirements.txt modal numpy pillow google-auth
       - name: Sleep-skip CPU tools (only with GTA6_SLEEP_SKIP=1; if this fails the check fails open = everything scanned)
         if: vars.GTA6_SLEEP_SKIP == '1'

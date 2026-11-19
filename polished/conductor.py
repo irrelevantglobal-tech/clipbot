@@ -852,6 +852,7 @@ def holes_of(plan_vod):
 
 def process(run, gpu, an, plans, lo, man, common, episodes):
     """Render, gate, review, upload IN ORDER. Returns a hold reason or None."""
+    from clipbot import realname
     a = run.a
     jobs, meta = [], {}
     base = series_base(common, a.series, a.vod, plans[0]["bounds"][0] + lo) if plans else None
@@ -893,6 +894,12 @@ def process(run, gpu, an, plans, lo, man, common, episodes):
         run.st.board(force=True, stage="render, review, upload", detail="QA stall: no update for %.0f min" % mins)
         log("FAULT stall: silent for %.0f min" % mins)
         time.sleep(mins * 60)
+    # Leon 19 Nov (marathon): ONE episode upload per quota day (CLIPBOT_EP_UPLOADS). Only that many are rendered (no GPU spent
+    # on episodes that cannot go up today); the window then holds until the quota reset and carries on from there.
+    budget = int(os.environ.get("CLIPBOT_EP_UPLOADS") or 0) if a.upload else 0
+    if budget and len(todo) > budget:
+        todo = todo[:budget]
+    todo_keys = {k for k, _, _ in todo}
     sink, stop = queue.Queue(), threading.Event()
     th = threading.Thread(target=gpu.render_many, args=(a.vod, todo, sink, stop), daemon=True)
     th.start()
@@ -901,6 +908,11 @@ def process(run, gpu, an, plans, lo, man, common, episodes):
     kept_n = 0
     for key, pv, t in jobs:
         m = meta[key]
+        if "video" not in m and key not in todo_keys:
+            hold = (f"episode {m['i']} (stream time {hm(m['start'])}): today's episode budget ({budget}) is used; "
+                    "the window carries on after the YouTube quota reset")
+            man["quota_hold_until"] = episodes.quota_reset().strftime("%Y-%m-%dT%H:%M:%SZ")
+            break
         if "video" not in m:
             t_wait = time.time()
             while key not in ready:
@@ -932,6 +944,15 @@ def process(run, gpu, an, plans, lo, man, common, episodes):
             m["report"] = {k: rep.get(k) for k in ("duration", "expected", "gpu", "encoder", "timings", "size")}
             run.st.board(force=True, stage="render, review, upload", done=m["i"], total=len(jobs),
                          detail="episode %d passed the gates and the review" % m["i"])
+            if a.upload and common.WHO == "leon":
+                # nothing of Leon's goes up unseen while the PS5 screen can show his real name (19 Nov): fail-closed
+                rn = realname.check(mp4)
+                log(f"  ep {m['i']}: {realname.line(rn)}")
+                m["name_check"] = {"ok": rn["ok"], "frames": rn["frames"], "hits": rn["hits"], "error": rn["error"]}
+                if not rn["ok"]:
+                    hold = (f"episode {m['i']} (stream time {hm(m['start'])}): real-name check "
+                            f"{'read it in %d frame(s)' % rn['hits'] if rn['hits'] else 'could not read it (' + str(rn['error']) + ')'}; not uploaded")
+                    break
             if a.upload:
                 title, desc = draft_copy(run, m, episodes)
                 try:
@@ -948,6 +969,7 @@ def process(run, gpu, an, plans, lo, man, common, episodes):
                         # worker retry at once and burn its 3 tries before the 08:00 UK reset, then skip the window.
                         hold = (f"episode {m['i']} (stream time {hm(m['start'])}): YouTube upload quota used up "
                                 "(resets 08:00 UK); the window is kept and retried")
+                        man["quota_hold_until"] = episodes.quota_reset().strftime("%Y-%m-%dT%H:%M:%SZ")
                         break
                     raise
                 m["video"] = vid
@@ -965,6 +987,8 @@ def process(run, gpu, an, plans, lo, man, common, episodes):
               "plan_problems": p["stats"].get("problems", []), "report": m.get("report")}
         if m.get("video"):
             ep["video"] = m["video"]
+        if m.get("name_check"):
+            ep["name_check"] = m["name_check"]
         man["episodes"].append(ep)
         man["holes"] += holes_of(m["pv"])
         jdump(man, os.path.join(a.out, "episodes.json"))
