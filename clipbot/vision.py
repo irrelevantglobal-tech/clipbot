@@ -64,18 +64,25 @@ def sheet(mp4, out_jpg, dur=None):
         dur = float(subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", mp4],
                                    capture_output=True, text=True, check=True).stdout.strip() or 0)
     cols, rows = 4, 2
-    im = Image.new("RGB", (cols * W, rows * H))
+    # tiles take the clip's own shape: a vertical Short in 16:9 tiles left black side bars that the model read as
+    # "black frames" and rejected good clips for (19 Nov tidy-old run, 8 of 8 'black' rejects were this)
+    wh = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height",
+                         "-of", "csv=p=0", mp4], capture_output=True, text=True).stdout.strip().split(",")
+    tw, th = W, H
+    if len(wh) >= 2 and wh[0].isdigit() and wh[1].isdigit() and int(wh[1]) > int(wh[0]):
+        tw, th = H, W   # 9:16 tiles (270x480), the same pixels per frame as the 16:9 ones
+    im = Image.new("RGB", (cols * tw, rows * th))
     for i in range(N_FRAMES):
         t = dur * (i + 0.5) / N_FRAMES
         fp = out_jpg + f".f{i}.jpg"
         subprocess.run(["ffmpeg", "-v", "error", "-y", "-ss", f"{t:.2f}", "-i", mp4, "-frames:v", "1",
-                        "-vf", f"scale={W}:{H}:force_original_aspect_ratio=decrease,pad={W}:{H}:(ow-iw)/2:(oh-ih)/2", fp],
+                        "-vf", f"scale={tw}:{th}:force_original_aspect_ratio=decrease,pad={tw}:{th}:(ow-iw)/2:(oh-ih)/2", fp],
                        check=True, capture_output=True)
         fr = Image.open(fp).convert("RGB")
         d = ImageDraw.Draw(fr)
         d.rectangle([0, 0, 64, 20], fill="black")
         d.text((4, 4), f"{t:.1f}s", fill="yellow")
-        im.paste(fr, ((i % cols) * W, (i // cols) * H))
+        im.paste(fr, ((i % cols) * tw, (i // cols) * th))
         os.remove(fp)
     im.save(out_jpg, quality=85)
     return dur

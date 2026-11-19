@@ -60,5 +60,27 @@ class Parse(unittest.TestCase):
             self.assertEqual(vision.check("x.mp4", "t", "words", workdir=".")["verdict"], "unchecked")
 
 
+class Sheet(unittest.TestCase):
+    def test_vertical_clip_gets_vertical_tiles(self):
+        """19 Nov: 16:9 tiles round a 9:16 Short left black bars the model called 'black frames'."""
+        import shutil
+        import subprocess
+        import tempfile
+        if not shutil.which("ffmpeg"):
+            self.skipTest("no ffmpeg")
+        d = tempfile.mkdtemp()
+        try:
+            src = os.path.join(d, "v.mp4")
+            subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "color=c=red:s=108x192:d=2", "-pix_fmt", "yuv420p",
+                            src], check=True)
+            vision.sheet(src, os.path.join(d, "s.jpg"))
+            from PIL import Image
+            im = Image.open(os.path.join(d, "s.jpg")).convert("RGB")
+            self.assertEqual(im.size, (4 * vision.H, 2 * vision.W))
+            self.assertGreater(im.getpixel((10, 240))[0], 150)          # tile edge is picture, not a black bar
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
+
 if __name__ == "__main__":
     unittest.main()
