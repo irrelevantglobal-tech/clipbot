@@ -508,7 +508,9 @@ def main():
     cands = shortlist(wins, words, dur)
     marked = moment_cands(moments(a.vod, base, dur), wins, words, dur, exclude)
     cands = [c for c in cands if all(abs(c["s"] - m["s"]) > SPACING for m in marked)]
-    tl = chat.timeline(a.vod, base, base + dur + chat.AFTER) if cands and not kick else []
+    # Kick (19 Nov): chat activity counted live by the kick relay stands in for the missing chat replay
+    tl = ((chat.kick_timeline(a.vod, base, base + dur + chat.AFTER) if kick else chat.timeline(a.vod, base, base + dur + chat.AFTER))
+          if cands else [])
     for c in cands:
         c["chat"] = chat.around(tl, c["s"] + base, c["e"] + base)
     print(f"{len(wins)} scored windows -> {len(cands)} candidates, {len(marked)} marked moments; "

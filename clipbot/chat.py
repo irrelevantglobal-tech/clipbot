@@ -71,3 +71,28 @@ def around(tl, s, e):
 def boost(msgs, reacts):
     """Rank bonus: each message 0.4, each reaction 0.8 more, at most 2 (a strong judge verdict is worth 2.5)."""
     return min(2.0, 0.4 * msgs + 0.8 * reacts)
+
+
+def kick_timeline(vod, lo, hi, get=None):
+    """Kick has no chat replay (19 Nov): the gigglesghost-kick-relay Durable Object counts human chat lines per minute
+    (+ how many were reactions, same REACT pattern) and Forge reads them for us. Each minute's lines are spread evenly
+    over that minute, reactions first, so around() and boost() work exactly as on Twitch. The Kick VOD id is the
+    stream's start in unix seconds. Empty on any failure (logged), like timeline()."""
+    try:
+        start = int(vod)
+        if get is None:
+            from . import common
+            get = common.worker
+        r = get(f"/clipbot/kickchat?from={start + int(lo)}&to={start + int(hi) + 60}")
+        out = []
+        for m, n, rx in r.get("minutes") or []:
+            n, rx = int(n), int(rx)
+            for i in range(n):
+                t = int(m) - start + (i + 0.5) * 60.0 / n
+                if lo <= t <= hi:
+                    out.append((t, i < rx))
+        out.sort()
+        return out
+    except Exception as e:
+        print(f"kick chat unavailable ({type(e).__name__}: {str(e)[:120]}): no chat boost this run")
+        return []
