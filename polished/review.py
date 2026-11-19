@@ -19,6 +19,7 @@ import argparse
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 
@@ -48,7 +49,13 @@ def sheets(mp4, work, step=20.0):
     while t < d - 0.5:
         times.append(t)
         t += step
-    tdir = os.path.join(work, "_review_tiles")
+    # Tiles are cached PER FILE (19 Nov: the review dir persists in the window's state, keyed by the episode marker, so a
+    # re-cut of the same episode was reviewed on the OLD cut's tiles: a menu stretch already cut out was still "seen").
+    tdir = os.path.join(work, "_review_tiles", "%d" % os.path.getsize(mp4))
+    if os.path.isdir(os.path.dirname(tdir)):
+        for old in os.listdir(os.path.dirname(tdir)):
+            if old != os.path.basename(tdir):
+                shutil.rmtree(os.path.join(os.path.dirname(tdir), old), ignore_errors=True)
     os.makedirs(tdir, exist_ok=True)
     fnt = None
     for fp in (r"C:\Windows\Fonts\arialbd.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"):
