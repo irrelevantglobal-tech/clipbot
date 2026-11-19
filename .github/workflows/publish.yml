@@ -10,6 +10,9 @@ on:
       who:
         description: whose approved clips (leon = the main channel, glatiar = Titan)
         default: leon
+      shorts:
+        description: "0 = episodes only (Forge, marathon auto-publish: Shorts keep to the twice-daily runs, quota)"
+        default: "1"
   # Times are UTC. Re-pushed 2026-10-30: schedules stopped firing after the repo went public.
   schedule:
     - cron: "17 6 * * *"
@@ -83,7 +86,7 @@ jobs:
           path: ~/.cache/huggingface
           key: whisper-base.en-small.en-v1
       - name: Upload + schedule
-        if: steps.q.outputs.n != '0'
+        if: steps.q.outputs.n != '0' && inputs.shorts != '0'
         run: python -m clipbot.publish
       - name: Schedule approved episodes
         if: steps.q.outputs.e != '0' && matrix.who == 'leon'
