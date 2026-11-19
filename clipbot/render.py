@@ -181,7 +181,10 @@ def render(src, out_final, out_preview, hook="", words=None, workdir=None):
     fonts = os.path.relpath(FONTS, workdir).replace("\\", "/")
     vf = "scale=-2:1920:flags=lanczos,crop=1080:1920"
     if masked:
-        vf += ",drawbox=x=0:y=1688:w=iw:h=232:color=black:t=fill"
+        # 19 Nov (boss review): the old black box over the stream's own captions showed as a black band on some Shorts and
+        # not others. Instead zoom ~11% and crop from the top, so source rows 0-969 fill 9:16 and the caption band
+        # (source y972-1037) is simply out of frame: every Short is full-bleed the same way.
+        vf = "scale=-2:2140:flags=lanczos,crop=1080:1920:(iw-1080)/2:0"
     vf += f",subtitles={os.path.basename(ass)}:fontsdir={fonts}"
     tmp = out_final + ".part.mp4"
     run(["ffmpeg", "-y", "-v", "error", "-i", os.path.abspath(src), "-vf", vf, "-r", "60",
