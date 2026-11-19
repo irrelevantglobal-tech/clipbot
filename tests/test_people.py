@@ -76,6 +76,9 @@ def fake_world(common, publish, queue, uploads, channel, log):
     publish.video_file = lambda it, work: f"clip-{it['id']}.mp4"
     publish.time = types.SimpleNamespace(sleep=lambda s: None)
     publish.HORIZON_H = 24 * 365                 # release everything: the result must not depend on the time of day
+    # the real-name guard reads the picture (tesseract); here every clip reads clear unless a test says otherwise
+    publish.realname = types.SimpleNamespace(check=lambda p: {"ok": True, "frames": 15, "text_frames": 9, "hits": 0, "error": None},
+                                             line=lambda r: "real-name check: stub")
 
 
 def short(vid, marker, status, published="2026-10-01T10:00:00Z"):
@@ -124,6 +127,36 @@ class OwnerRegression(unittest.TestCase):
         self.assertIn("Car Chaos | OwnerBrand", titles)
         self.assertNotIn("OldName", repr(log))
 
+
+    def test_publish_holds_a_clip_showing_his_real_name(self):
+        common, publish = load(None)
+        log = []
+        q, uploads = owner_queue("leon")
+        fake_world(common, publish, q, uploads, OWNER_CH, log)
+        publish.realname = types.SimpleNamespace(check=lambda p: {"ok": False, "frames": 15, "text_frames": 9, "hits": 2, "error": None},
+                                                 line=lambda r: "real-name check: 2 name hit(s) -> HELD")
+        cwd = os.getcwd()
+        os.chdir(tempfile.mkdtemp())
+        try:
+            publish.main()
+        finally:
+            os.chdir(cwd)
+        self.assertFalse(any(c[0] == "upload" for c in log), "a held clip is never uploaded")
+        self.assertTrue(any(c[0] == "worker" and c[1] == "/clipbot/hold" for c in log))
+
+    def test_publish_upload_budget(self):
+        common, publish = load(None)
+        log = []
+        q, uploads = owner_queue("leon")
+        fake_world(common, publish, q, uploads, OWNER_CH, log)
+        publish.MAX_UPLOADS = 1
+        cwd = os.getcwd()
+        os.chdir(tempfile.mkdtemp())
+        try:
+            publish.main()
+        finally:
+            os.chdir(cwd)
+        self.assertEqual(sum(1 for c in log if c[0] == "upload"), 1)
     def test_leon_constants_unchanged(self):
         common, publish = load(None)
         self.assertEqual((common.WHO, common.CHANNEL_ID, common.TWITCH_UID), ("leon", OWNER_CH, "4242"))

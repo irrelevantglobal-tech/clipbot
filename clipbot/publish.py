@@ -31,12 +31,15 @@ import urllib.request
 import subprocess
 import zipfile
 
-from . import common, legacy, render
+from . import common, legacy, realname, render
 
 SUFFIX = f" | {common.BRAND}"                      # " | <brand>"
 LIVE = (f"Catch the chaos live: https://{common.live_url()}" if common.live_url()
         else f"Catch the chaos live: {common.live_text()}")   # Leon: Kick (owner 18 Nov); Glatiar: Twitch
 HORIZON_H = 24
+# fresh YouTube uploads per run, 0 = no cap. Marathon auto-publish (boss 19 Nov): the quota (10k/day, ~1,600 an upload)
+# goes to episodes first, so Shorts get CLIPBOT_MAX_UPLOADS per publish run (repo variable; twice-daily cron).
+MAX_UPLOADS = int(os.environ.get("CLIPBOT_MAX_UPLOADS") or 0)
 
 
 def yt_title(t):
@@ -191,6 +194,7 @@ def main():
     work = os.path.abspath("work")
     os.makedirs(work, exist_ok=True)
     order = sorted(items, key=lambda x: (int(x.get("run_id") or 0), x.get("n", 0)))
+    fresh = 0
     for i, it in enumerate(order):
         marker = f"clipbot:{it['id']}"
         try:
@@ -223,7 +227,19 @@ def main():
                     # upload a fresh copy into the slot, leave the old one private.
                     print(f"{it['id']}: {existing['id']} was public once and cannot be scheduled -> fresh upload")
             if not vid:
-                vid = common.upload(video_file(it, work), title, desc, at, tags=tags)
+                if MAX_UPLOADS and fresh >= MAX_UPLOADS:
+                    # quota budget (marathon auto-publish, boss 19 Nov): episodes come first, Shorts take a fixed share
+                    print(f"upload budget of {MAX_UPLOADS} reached: holding {len(order) - i} approved clip(s) for the next run")
+                    break
+                path = video_file(it, work)
+                if common.WHO == "leon":
+                    rn = realname.check(path)
+                    print(f"{it['id']}: {realname.line(rn)}")
+                    if not rn["ok"]:
+                        common.worker("/clipbot/hold", {"id": it["id"], "reason": realname.line(rn), **common.who_fields()})
+                        continue
+                vid = common.upload(path, title, desc, at, tags=tags)
+                fresh += 1
             taken.append(at.strftime("%Y-%m-%dT%H:%M:%SZ"))
             for _ in range(8):                       # YouTube shows publishAt seconds late: 3 false "failed" DMs on 10-19
                 got = common.yt("videos", part="status", id=vid)["items"][0]["status"]

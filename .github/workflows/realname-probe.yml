@@ -1,0 +1,21 @@
+name: realname-probe
+# Proves the real-name guard (clipbot/realname.py) on the runner with a MADE-UP name (never the real one): a clip that
+# shows it 3 s must be HELD, a clip without it must be clear, and the time per frame is printed. Run by hand only.
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: for i in 1 2 3 4; do sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg tesseract-ocr tesseract-ocr-eng && break; echo "apt failed ($i), retrying in 30 s"; sleep 30; done; command -v ffmpeg > /dev/null; command -v tesseract > /dev/null
+      - name: Probe
+        env:
+          CLIPBOT_REALNAME: "Jane Doelittle,Doelittle"
+        run: python tests/probe/realname_probe.py

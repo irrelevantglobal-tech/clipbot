@@ -37,6 +37,8 @@ jobs:
       KICK_SLUG_PUBLIC: ${{ vars.KICK_SLUG_PUBLIC }}   # 1 = the address may go in public copy
       KICK_SLUG: ${{ secrets.KICK_SLUG }}   # Kick VODs: episode thumbnails read the Kick VOD (polished/source.py)
       KICK_CHANNEL_ID: ${{ secrets.KICK_CHANNEL_ID }}   # the slug must BE this channel, or nothing is read
+      CLIPBOT_REALNAME: ${{ secrets.CLIPBOT_REALNAME }}   # real-name guard terms (clipbot/realname.py): never in this public repo
+      CLIPBOT_MAX_UPLOADS: ${{ vars.CLIPBOT_MAX_UPLOADS }}   # fresh Shorts uploads per run (quota: episodes first); unset = no cap
       CLIPBOT_WORKER: ${{ secrets.CLIPBOT_WORKER }}
       TWITCH_CLIENT_ID: ${{ secrets.TWITCH_CLIENT_ID }}
       TWITCH_CLIENT_SECRET: ${{ secrets.TWITCH_CLIENT_SECRET }}
@@ -74,7 +76,7 @@ jobs:
           python-version: "3.12"
           cache: pip
       - if: steps.q.outputs.n != '0' || steps.q.outputs.e != '0'
-        run: for i in 1 2 3 4; do sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg && break; echo "apt failed ($i), retrying in 30 s"; sleep 30; done; command -v ffmpeg > /dev/null && pip install -q -r requirements.txt
+        run: for i in 1 2 3 4; do sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg tesseract-ocr tesseract-ocr-eng && break; echo "apt failed ($i), retrying in 30 s"; sleep 30; done; command -v ffmpeg > /dev/null && pip install -q -r requirements.txt
       - uses: actions/cache@v4
         if: steps.q.outputs.n != '0' || steps.q.outputs.e != '0'
         with:

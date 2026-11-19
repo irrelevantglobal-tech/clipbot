@@ -32,9 +32,10 @@ import re
 import shutil
 import subprocess
 import sys
-from datetime import datetime
+import urllib.error
+from datetime import datetime, timedelta
 
-from . import common, legacy, render
+from . import common, legacy, realname, render
 
 HOLE_MIN = 100.0         # s of no speech before a stretch can be cut at all
 MOTION_STILL = 1.6       # mean abs luma change per second (0-255 scale, 64x36) below which a frame pair is "still"
@@ -431,9 +432,28 @@ def upload_private(path, title, description, tags):
         headers={"Authorization": "Bearer " + common.yt_token(), "Content-Type": "application/json",
                  "User-Agent": "ClipBot/1.0",
                  "X-Upload-Content-Type": "video/mp4", "X-Upload-Content-Length": str(size)})
-    with urllib.request.urlopen(init, timeout=60) as r:
-        session = r.headers["Location"]
+    try:
+        with urllib.request.urlopen(init, timeout=60) as r:
+            session = r.headers["Location"]
+    except urllib.error.HTTPError as e:
+        detail = e.read()[:400].decode("utf-8", "replace")
+        if e.code == 403 and ("quotaExceeded" in detail or "uploadLimitExceeded" in detail or "dailyLimitExceeded" in detail):
+            raise QuotaOut(f"YouTube quota is out ({e.code})")
+        raise RuntimeError(f"upload start -> {e.code}: {detail}")
     return common.upload_session(session, path, size)
+
+
+class QuotaOut(RuntimeError):
+    """The YouTube API quota for the day is spent (resets at midnight Pacific)."""
+
+
+def quota_reset(now=None):
+    """The next YouTube quota reset: midnight America/Los_Angeles, as UTC."""
+    from zoneinfo import ZoneInfo
+    pt = ZoneInfo("America/Los_Angeles")
+    t = (now or datetime.now(common.UTC)).astimezone(pt)
+    nxt = datetime(t.year, t.month, t.day, tzinfo=pt) + timedelta(days=1)
+    return nxt.astimezone(common.UTC)
 
 
 _ledger = None
@@ -590,7 +610,21 @@ def main():
         print(f"  ep {i}: {info}")
         ep["joins"] = join_preview(info["file"], sp, os.path.join(a.out, f"ep{i}_joins.mp4"))
         if a.upload:
-            vid = upload_private(info["file"], title, desc, tags_for(a.series))
+            if common.WHO == "leon":
+                # auto-publish (boss 19 Nov) only takes an episode whose picture was read and holds no real name
+                rn = realname.check(info["file"])
+                print(f"  ep {i}: {realname.line(rn)}")
+                ep["name_check"] = {"ok": rn["ok"], "frames": rn["frames"], "hits": rn["hits"], "error": rn["error"]}
+            try:
+                vid = upload_private(info["file"], title, desc, tags_for(a.series))
+            except QuotaOut as qe:
+                # out of YouTube quota: stop cleanly, the next window starts at THIS episode after the reset
+                # (no failed run, no hourly retry DMs); Forge holds the VOD until quota_hold_until
+                manifest["next_from"] = round(s, 2)
+                manifest["final"] = False
+                manifest["quota_hold_until"] = quota_reset().strftime("%Y-%m-%dT%H:%M:%SZ")
+                print(f"  ep {i}: {qe}; stopping, resumes at {fmt(s)} after {manifest['quota_hold_until']}")
+                break
             ep["video"] = vid
             print(f"  ep {i}: uploaded PRIVATE https://youtu.be/{vid}")
             os.remove(info["file"])
