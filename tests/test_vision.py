@@ -24,6 +24,8 @@ class Copy(unittest.TestCase):
         self.assertEqual(c["description"], "I did not see that tiger coming")
         self.assertEqual(c["tiktok_hook"], "why is there a tiger on the freeway")
         self.assertIsNone(vision.copy_for({"moment": None}, "GTA 6", "B"))
+        dup = vision.copy_for({"moment": "Cyberpunk 2077: Getting Crushed By Adam Smasher"}, "Cyberpunk 2077", "B")
+        self.assertEqual(dup["title"], "Cyberpunk 2077: Getting Crushed By Adam Smasher")
 
     def test_game_names(self):
         self.assertEqual(vision.game_name("Grand Theft Auto VI"), "GTA 6")

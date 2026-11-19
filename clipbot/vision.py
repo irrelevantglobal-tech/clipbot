@@ -36,7 +36,9 @@ Proposed title: "{title}"
 
 Decide from what you SEE first and the words second:
 - reject if most frames are a menu, map, inventory, settings, a radio/weapon wheel, a loading or black screen, heavy blur,
-  or a static/pause screen; or if there is no clear moment worth watching.
+  or a static/pause screen; or if there is no clear moment worth watching. Plain driving, walking, cruising, flying,
+  sightseeing or phone browsing with no fail, surprise, funny line or reaction, skilful play or story payoff is a reject,
+  however clean the gameplay looks. Pass only what someone scrolling Shorts would stop for.
 - trim if the good part is real but most of the clip is dead air or menus around it: give start and end seconds of the part
   worth keeping (at least 8 s, inside 0..{dur:.1f}).
 - otherwise pass.
@@ -151,6 +153,8 @@ def copy_for(vz, game, brand):
     brand_tag = "#" + re.sub(r"[^A-Za-z0-9]", "", brand or "")
     low = list(dict.fromkeys([t.lower() for t in tags + moment_tag] + ["#gaming", brand_tag.lower()]))
     hook = vz.get("hook") or vz["moment"]
+    if game:   # the model sometimes repeats the game name ("Cyberpunk 2077: Cyberpunk 2077: ...")
+        vz = {**vz, "moment": re.sub(r"^\s*(" + re.escape(game) + r"|GTA ?(6|VI))\s*[:\-|]\s*", "", vz["moment"], flags=re.I) or vz["moment"]}
     return {
         "title": f"{game}: {vz['moment']}" if game else vz["moment"],
         "description": vz.get("line") or "",
