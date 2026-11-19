@@ -23,7 +23,7 @@ from datetime import datetime, timedelta
 from . import common, instagram, legacy, publish, realname
 
 API = "https://api.buffer.com"
-MAX_PER_RUN = 2
+MAX_PER_RUN = 1                  # boss 19 Nov: ONE a run, never within common.PACE_H of the last X post
 STALE = timedelta(days=3)
 LIMIT = 280
 URL_LEN = 23                     # X counts every link as 23 characters
@@ -138,10 +138,14 @@ def main():
     at = lambda it: datetime.fromisoformat(it["at"].replace("Z", "+00:00"))
     due = sorted((it for it in items if at(it) <= now), key=at)
     print(f"{len(items)} waiting for X, {len(due)} past their slot")
+    stale_copy = [it["id"] for it in due if not common.copy_ok(it)]
+    if stale_copy:   # boss 19 Nov: never post copy the vision writer did not write
+        print(f"{len(stale_copy)} not posted: no new-standard copy yet ({', '.join(stale_copy)[:200]})")
+    due = [it for it in due if common.copy_ok(it)]
     if not key:
         print("no Buffer login saved yet (owner: copy the Buffer API key, then double-click 'Set Buffer key from clipboard')")
         return
-    if not due:
+    if not due or not common.pace_ok("x"):
         return
     try:
         org, chan = x_channel(key)

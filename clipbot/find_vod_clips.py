@@ -590,6 +590,8 @@ def main():
         # copy: the vision model's, to Leon's 19 Nov standard; the old Workers AI writer only for an unchecked clip
         copy = {k: x for k, x in vcopy.items() if k != "title"} if vcopy else common.clip_copy(title, stream_title=v["title"], transcript=c["text"])
         if vcopy:
+            copy["copy_std"] = vision.COPY_STD
+        if vcopy:
             title = vcopy["title"]
         # the signals ride along in the manifest, so later approvals can re-calibrate the floor (judge.py)
         clips.append({"n": n, "start": round(c["s"] + base, 2), "end": round(c["e"] + base, 2), "title": title, "score": c["score"],

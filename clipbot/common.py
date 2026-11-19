@@ -485,6 +485,40 @@ def worker(path, payload=None, method=None):
                 headers={"Authorization": "Bearer " + env("CLIPBOT_TOKEN")}, timeout=120)
 
 
+# Boss 19 Nov (two Reels with old, wrong-game copy went out 5 min apart): (1) only copy written by the vision writer
+# (clipbot/vision.py: it watched the clip, Leon's 19 Nov standard) may be posted on ANY platform; (2) a lane posts at
+# most ONE item a run and never within PACE_H of its own last post, whatever backlog it has.
+PACE_H = 2.0
+
+
+def copy_ok(it):
+    from .vision import COPY_STD
+    return str(it.get("copy_std") or "") == COPY_STD
+
+
+def pace_ok(lane, platform_last=None, now=None):
+    """True when this lane's last post is PACE_H or more ago. Two sources: the worker's record of our last post on the
+    lane (set when the post is reported) and, if given, the platform's own newest post time. Unreadable = False."""
+    now = now or datetime.now(UTC)
+    try:
+        rec = worker(f"/clipbot/lastpost?lane={lane}").get("at")
+    except Exception as e:   # noqa: BLE001 - fail closed: no proof of the gap, no post
+        print(f"{lane}: could not read the last post time ({str(e)[:120]}); nothing posted this run")
+        return False
+    lasts = []
+    for x in (rec, platform_last):
+        if x:
+            try:
+                lasts.append(datetime.fromisoformat(str(x).replace("Z", "+00:00").replace("+0000", "+00:00")))
+            except ValueError:
+                print(f"{lane}: unreadable last post time {str(x)[:40]!r}; nothing posted this run")
+                return False
+    if lasts and now - max(lasts) < timedelta(hours=PACE_H):
+        print(f"{lane}: last post {max(lasts).strftime('%H:%M')}Z is under {PACE_H:g} h ago; the next one waits for a later run")
+        return False
+    return True
+
+
 def uk(dt):
     return dt.astimezone(UK).strftime("%a %d %b %H:%M UK")
 

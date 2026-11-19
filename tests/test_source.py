@@ -89,7 +89,10 @@ class KickInfo(unittest.TestCase):
 
     def test_by_kick_id_live(self):
         g = fake_get(vids())
-        inf = source.kick_info("k138370155", slug="chan", get=g)
+        # the clock is pinned to an hour after the fixture's start: "recording" is only true inside KICK_VOD_CAP_S of now,
+        # so a real clock made this test fail a couple of days after it was written (19 Nov)
+        with mock.patch.object(source.time, "time", return_value=source._unix("2026-11-17T15:46:55Z")):
+            inf = source.kick_info("k138370155", slug="chan", get=g)
         self.assertEqual(inf["created"], "2026-11-17T14:46:55Z")
         self.assertTrue(inf["recording"])
         self.assertEqual(inf["duration"], 0.0)

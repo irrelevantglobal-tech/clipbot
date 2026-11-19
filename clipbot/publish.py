@@ -195,6 +195,11 @@ def main():
     if len(mine) != len(items):
         print(f"ignoring {len(items) - len(mine)} queue item(s) that belong to someone else")
     items = mine
+    if common.WHO == "leon":   # boss 19 Nov: no old-copy item goes up anywhere; it waits in the queue for re-copy
+        stale_copy = [x["id"] for x in items if not common.copy_ok(x)]
+        if stale_copy:
+            print(f"{len(stale_copy)} not uploaded: no new-standard copy yet ({', '.join(stale_copy)[:200]})")
+        items = [x for x in items if common.copy_ok(x)]
     if not items:
         print("queue empty")
         return

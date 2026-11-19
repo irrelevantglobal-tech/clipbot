@@ -18,7 +18,7 @@ import subprocess
 import sys
 import time
 
-from . import common, render
+from . import common, render, vision
 from .twitch_clips import clean_emoji
 from polished import source  # noqa: E402
 
@@ -78,10 +78,23 @@ def main(argv=None):
         words = render.transcribe(raw)
         hook = clean_emoji(c["title"]) if c["title"].strip() else "Kick clip"
         info = render.render(raw, os.path.join(a.out, f"clip{n}.mp4"), os.path.join(a.out, f"preview{n}.mp4"), hook=hook, words=words)
-        copy = common.clip_copy(hook, game="", transcript=" ".join(w["w"] for w in words))
+        # Boss 19 Nov (two Reels went out with GTA V / Sea of Thieves tags on GTA 6 clips): the game is Kick's own category
+        # for the clip, never a guess, and the copy is the vision writer's (Leon's 19 Nov standard), which WATCHES the clip.
+        # No vision copy = no copy_std, and every posting lane refuses the clip until it has one.
+        game = vision.game_name(c.get("category") or "") or (c.get("category") or "").strip()
+        transcript = " ".join(w["w"] for w in words)
+        vz = vision.check(raw, hook, transcript, workdir=a.out, game=game)
+        vcopy = vision.copy_for(vz, game, common.BRAND) if game and vz["verdict"] in ("pass", "trim") else None
+        if vcopy:
+            copy = {k: x for k, x in vcopy.items() if k != "title"}
+            copy["copy_std"] = vision.COPY_STD
+        else:
+            copy = {"description": "", "hashtags": [], "tags": [], "game": game}
+            print(f"{c['id'][:30]}: no vision copy ({vz['verdict']}: {vz['reason'][:120]}); offered without copy, nothing will post it")
         clips.append({"n": n, "slug": c["id"], "title": hook, "creator": c["creator"], "start": 0, "end": info["duration"],
-                      **copy, **info})
-        print(f"clip {n}: {c['id'][:30]} {info['duration']:.0f}s by {c['creator'] or '?'} tags={copy['hashtags']}")
+                      "vision": {k: vz[k] for k in ("verdict", "reason", "cost", "lane")}, **copy, **info})
+        print(f"clip {n}: {c['id'][:30]} {info['duration']:.0f}s by {c['creator'] or '?'} game={game or '?'} "
+              f"vision={vz['verdict']} tags={copy.get('hashtags')}")
     with open(os.environ.get("GITHUB_OUTPUT", os.devnull), "a") as f:
         f.write(f"batch={batch if clips else ''}\n")
     if not clips:

@@ -213,6 +213,10 @@ def main():
     due = sorted((it for it in items if datetime.fromisoformat(it["at"].replace("Z", "+00:00")) <= now + timedelta(hours=HORIZON_H)),
                  key=lambda it: it["at"])[:int(os.environ.get("TT_MAX") or 999)]
     print(f"{len(items)} waiting for TikTok, {len(due)} due within {HORIZON_H}h")
+    stale_copy = [it["id"] for it in due if not common.copy_ok(it)]
+    if stale_copy:   # boss 19 Nov: never post copy the vision writer did not write
+        print(f"{len(stale_copy)} not scheduled: no new-standard copy yet ({', '.join(stale_copy)[:200]})")
+    due = [it for it in due if common.copy_ok(it)]
     if not due:
         return
     from playwright.sync_api import sync_playwright
@@ -233,7 +237,7 @@ def main():
         taken = {int(x.get("schedule_time") or 0): (x.get("desc") or "") for x in posts if int(x.get("schedule_time") or 0) > now.timestamp()}
         print(f"TikTok Studio: {len(posts)} posts read, {len(taken)} scheduled")
         marathon = common.marathon_mode()                # hourly Shorts: the same 50 min spacing as YouTube
-        gap = common.MARATHON_GAP_MIN if marathon else 90
+        gap = max(common.MARATHON_GAP_MIN if marathon else 90, int(common.PACE_H * 60))   # boss 19 Nov: never under 2 h apart
         for it in due:
             try:
                 path = publish.video_file(it, work)

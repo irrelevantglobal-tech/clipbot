@@ -47,6 +47,8 @@ class Fake:
             return {"items": self.items, "login": self.login}
         if path == "/clipbot/igtoken" and payload is None:
             return self.tok
+        if path.startswith("/clipbot/lastpost"):
+            return {"at": getattr(self, "lastpost", None)}
         return {"ok": True}
 
     def http(self, url, data=None, headers=None, method=None, timeout=60, retries=3):
@@ -73,7 +75,7 @@ class Fake:
 def item(i, hours_ago):
     return {"id": f"vod:1:{i}", "n": i, "title": f"Clip {i}", "run_id": 1, "batch": "1",
             "at": (datetime.now(UTC) - timedelta(hours=hours_ago)).strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "tiktok_caption": f"hook number {i} here\n\n#gaming #fyp #clips"}
+            "tiktok_caption": f"hook number {i} here\n\n#gaming #fyp #clips", "copy_std": "1119"}
 
 
 class ReelsTest(unittest.TestCase):
@@ -95,13 +97,25 @@ class ReelsTest(unittest.TestCase):
             common.worker, common.http, publish.video_file = saved[:3]
             os.environ["IG_DRY"] = saved[3] or ""
 
-    def test_posts_due_only_oldest_first_cap_two(self):
+    def test_old_copy_and_a_recent_post_post_nothing(self):
+        """Boss 19 Nov: two old-copy Reels went out 5 min apart. No copy_std = never posted; a post under 2 h ago = wait."""
+        old = dict(item(1, 2))
+        old.pop("copy_std")
+        f = Fake([old])
+        self.run_main(f)
+        self.assertFalse([c for c in f.calls if c[0] == "http" and c[1].endswith("media_publish")])
+        f = Fake([item(2, 3)])
+        f.lastpost = (datetime.now(UTC) - timedelta(minutes=30)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        self.run_main(f)
+        self.assertFalse([c for c in f.calls if c[0] == "http" and c[1].endswith("media_publish")])
+
+    def test_posts_due_only_oldest_first_cap_one(self):
         f = Fake([item(1, 2), item(2, 30), item(3, 1), item(4, -5)])
         self.run_main(f)
         done = [c[2]["id"] for c in f.calls if c[1] == "/clipbot/igdone"]
-        self.assertEqual(done, ["vod:1:2", "vod:1:1"])          # 4 is in the future, 3 waits for the next run
+        self.assertEqual(done, ["vod:1:2"])                     # boss 19 Nov: ONE a run; 4 is in the future, the rest wait
         pub = [c for c in f.calls if c[0] == "http" and c[1].endswith("media_publish")]
-        self.assertEqual(len(pub), 4)                            # 2 Reels + their 2 Stories
+        self.assertEqual(len(pub), 2)                            # 1 Reel + its Story
         self.assertTrue(all(c[3] == 0 for c in pub), "media_publish is never retried")
         self.assertTrue(any(c[1] == "/clipbot/igfile?key=" + "k" * 32 and c[3] == "DELETE" for c in f.calls))
 

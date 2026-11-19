@@ -24,7 +24,7 @@ from datetime import datetime, timedelta
 from . import common, legacy, publish, realname, render, tiktok
 
 GRAPH = "https://graph.instagram.com/v26.0"   # replaced by the host stored with the token
-MAX_PER_RUN = 2                       # never dump a backlog: the next cron run takes the rest
+MAX_PER_RUN = 1                       # boss 19 Nov: ONE a run, and never within common.PACE_H of the last Reel
 STALE = timedelta(days=3)             # a slot this old is skipped, not posted late
 REFRESH_AFTER = timedelta(days=7)
 MAX_BYTES = 24 * 1024 * 1024          # worker KV value limit is 25 MB
@@ -289,15 +289,22 @@ def main():
     at = lambda it: datetime.fromisoformat(it["at"].replace("Z", "+00:00"))
     due = sorted((it for it in q["items"] if at(it) <= now), key=at)
     print(f"{len(q['items'])} waiting for Reels, {len(due)} past their slot")
+    stale_copy = [it["id"] for it in due if not common.copy_ok(it)]
+    if stale_copy:   # boss 19 Nov: never post copy the vision writer did not write; they wait in the queue for re-copy
+        print(f"{len(stale_copy)} not posted: no new-standard copy yet ({', '.join(stale_copy)[:200]})")
+    due = [it for it in due if common.copy_ok(it)]
     if not due:
         return
     try:
         tok = login()
-        recent = graph(f"/{tok['user_id']}/media", tok["token"], {"fields": "id,caption,permalink", "limit": 25}).get("data", [])
+        recent = graph(f"/{tok['user_id']}/media", tok["token"], {"fields": "id,caption,permalink,timestamp", "limit": 25}).get("data", [])
     except (LoginNeeded, RuntimeError) as e:
         common.worker("/clipbot/failed", {"id": "Reels", "error": f"{str(e)[:200]}. Nothing was posted. Log in again on your laptop: "
                                           "py -m clipbot.ig_login in Documents\\ClipBot"})
         raise SystemExit(1)
+    newest = max((m.get("timestamp") or "" for m in recent), default="") or None
+    if not common.pace_ok("ig", newest):
+        return
     work = os.path.abspath("work")
     os.makedirs(work, exist_ok=True)
     posted = failed = 0

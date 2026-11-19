@@ -21,6 +21,9 @@ import subprocess
 import sys
 
 N_FRAMES = 8
+# Boss 19 Nov: copy written by THIS writer (it watched the clip, Leon's 19 Nov standard) carries copy_std = COPY_STD;
+# every posting lane (publish, TikTok, Reels, X, Stories) refuses an item without it.
+COPY_STD = "1119"
 W, H = 480, 270
 _spent = {"gemini": 0.0, "claude": 0.0}
 MODELS = [m.strip() for m in (os.environ.get("CLIPBOT_VISION_MODELS") or "gemini-3.5-flash,gemini-3.5-flash-lite").split(",")

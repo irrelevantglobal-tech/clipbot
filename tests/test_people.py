@@ -94,11 +94,11 @@ def owner_queue(with_who=None):
     now = datetime.now(UTC)
     items = [
         {"id": "vod:1:1", "kind": "vod", "batch": "1", "vod": "1", "n": 1, "title": "Car Chaos", "description": "He drives into a lake.",
-         "hashtags": ["#gta"], "tags": ["gta"], "run_id": "5"},
+         "hashtags": ["#gta"], "tags": ["gta"], "run_id": "5", "copy_std": "1119"},
         {"id": "vod:1:2", "kind": "vod", "batch": "1", "vod": "1", "n": 2, "title": "Panic | " + OLD_NAME, "description": "",
-         "hashtags": [], "tags": [], "run_id": "5"},
+         "hashtags": [], "tags": [], "run_id": "5", "copy_std": "1119"},
         {"id": "clip:Slug", "kind": "clip", "batch": "9", "vod": "9", "n": 1, "title": "Done already", "description": "d " + OLD_NAME.lower(),
-         "hashtags": [], "tags": [], "run_id": "4"},
+         "hashtags": [], "tags": [], "run_id": "4", "copy_std": "1119"},
     ]
     uploads = [
         short("OLDPRIV", "clipbot:vod:1:2", {"privacyStatus": "private"}),

@@ -187,7 +187,8 @@ def kick_clips(since_unix, slug=None, get=_get, pages=5):
             if t >= since_unix and (c.get("privacy") or "public") == "public" and (c.get("clip_url") or c.get("video_url")):
                 out.append({"id": str(c["id"]), "title": c.get("title") or "", "created": t, "duration": float(c.get("duration") or 0),
                             "url": c.get("clip_url") or c.get("video_url"), "creator": (c.get("creator") or {}).get("username") or "",
-                            "livestream_id": str(c.get("livestream_id") or "")})
+                            "livestream_id": str(c.get("livestream_id") or ""),
+                            "category": str((c.get("category") or {}).get("name") or "")})   # the game, as Kick files it
         cursor = str(d.get("nextCursor") or "")
         if not page or not cursor or min(_unix(c.get("created_at")) for c in page) < since_unix:
             break
