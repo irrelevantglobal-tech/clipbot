@@ -83,6 +83,7 @@ jobs:
       KICK_SLUG: ${{ secrets.KICK_SLUG }}   # Kick VODs (k.../kt...): polished/source.py
       KICK_CHANNEL_ID: ${{ secrets.KICK_CHANNEL_ID }}   # the slug must BE this channel, or nothing is read
       CLIPBOT_REALNAME: ${{ secrets.CLIPBOT_REALNAME }}   # real-name guard terms (clipbot/realname.py): never in this public repo
+      CLIPBOT_EP_UPLOADS: ${{ vars.CLIPBOT_EP_UPLOADS }}   # episode uploads per quota day (Leon 19 Nov: 1); unset = no cap
       CLIPBOT_WORKER: ${{ secrets.CLIPBOT_WORKER }}
       CLIPBOT_TOKEN: ${{ secrets.CLIPBOT_TOKEN }}
       YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}

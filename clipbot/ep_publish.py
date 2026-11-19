@@ -27,6 +27,9 @@ from polished import source  # noqa: E402 - Kick VOD ids (k.../kt...) order Part
 
 LAUNCH = (date(2026, 11, 19), date(2026, 12, 2))
 LAUNCH_SLOTS, NORMAL_SLOTS = ["12:00", "18:00"], ["18:00"]
+# Leon 19 Nov (marathon): ONE episode a day, public at 18:00 UK (repo variable CLIPBOT_EP_SLOTS="18:00")
+if os.environ.get("CLIPBOT_EP_SLOTS", "").strip():
+    LAUNCH_SLOTS = NORMAL_SLOTS = [s.strip() for s in os.environ["CLIPBOT_EP_SLOTS"].split(",") if s.strip()]
 HORIZON_H = 48
 GAP_MIN = 90
 

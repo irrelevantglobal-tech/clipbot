@@ -581,7 +581,16 @@ def main():
         common.channel_gate()
 
     todo = eps[:a.max_episodes] if a.max_episodes else eps
+    budget = int(os.environ.get("CLIPBOT_EP_UPLOADS") or 0)   # Leon 19 Nov: 1 episode upload per quota day (0 = no cap)
+    uploaded = 0
     for i, (s, e) in enumerate(todo, 1):
+        if a.upload and budget and uploaded >= budget:
+            # today's episode is up: stop cleanly, the next window starts here after the quota reset (Forge holds the VOD)
+            manifest["next_from"] = round(s, 2)
+            manifest["final"] = False
+            manifest["quota_hold_until"] = quota_reset().strftime("%Y-%m-%dT%H:%M:%SZ")
+            print(f"  episode budget of {budget} reached: the next window starts at {fmt(s)} after {manifest['quota_hold_until']}")
+            break
         sp = [(max(x, s), min(y, e)) for x, y in spans_all if y > s and x < e]
         sp = [(x, y) for x, y in sp if y - x > 1]
         marker = f"{MARK}{a.vod}:{int(s)}"
@@ -626,6 +635,7 @@ def main():
                 print(f"  ep {i}: {qe}; stopping, resumes at {fmt(s)} after {manifest['quota_hold_until']}")
                 break
             ep["video"] = vid
+            uploaded += 1
             print(f"  ep {i}: uploaded PRIVATE https://youtu.be/{vid}")
             os.remove(info["file"])
         manifest["episodes"].append(ep)

@@ -155,6 +155,12 @@ MAX_PER_DAY = 2
 MARATHON_SLOTS = [f"{h:02d}:00" for h in range(9, 24)]
 MARATHON_PER_DAY = len(MARATHON_SLOTS)
 MARATHON_GAP_MIN = 50
+# Leon 19 Nov: YouTube = a fixed few Shorts a day (quota: ~1,600 an upload, one episode a day comes first). The repo variable
+# CLIPBOT_SHORT_SLOTS ("11:00,14:00,17:00,20:00") replaces the hourly marathon slots; the gap follows the slots (>= 2 h).
+if os.environ.get("CLIPBOT_SHORT_SLOTS", "").strip():
+    MARATHON_SLOTS = [s.strip() for s in os.environ["CLIPBOT_SHORT_SLOTS"].split(",") if re.fullmatch(r"\d{2}:\d{2}", s.strip())]
+    MARATHON_PER_DAY = len(MARATHON_SLOTS)
+    MARATHON_GAP_MIN = 120
 # Catch-up pace for a missed or clashing TikTok slot outside a marathon (Owner 2026-10-29: up to 4 a day).
 CATCHUP_SLOTS = ["18:00", "13:00", "21:00", "10:00"]
 CATCHUP_PER_DAY = 4

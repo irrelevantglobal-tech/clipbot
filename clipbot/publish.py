@@ -252,6 +252,10 @@ def main():
             common.worker("/clipbot/published", {"id": it["id"], "video": vid, "at": got.get("publishAt"),
                                                  "when": common.uk(at), "title": title, **common.who_fields()})
         except Exception as e:
+            if "quotaExceeded" in str(e) or "uploadLimitExceeded" in str(e):
+                # out of YouTube quota (the episode comes first): stop quietly, the next run takes the rest (Leon 19 Nov: no DMs)
+                print(f"{it['id']}: YouTube quota is out; stopping, {len(order) - i} clip(s) wait for the next run")
+                break
             print(f"{it['id']}: FAILED {str(e)[:300]}")
             try:
                 common.worker("/clipbot/failed", {"id": it["id"], "error": str(e)[:300], **common.who_fields()})
