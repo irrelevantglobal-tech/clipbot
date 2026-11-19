@@ -91,7 +91,8 @@ jobs:
         if: steps.q.outputs.n != '0' && inputs.shorts != '0'
         run: python -m clipbot.publish
       - name: Schedule approved episodes
-        if: steps.q.outputs.e != '0' && matrix.who == 'leon'
+        # EP_PUBLISH_HOLD=1 (repo var, 19 Nov): approved episodes wait undated until the boss has checked a sample
+        if: steps.q.outputs.e != '0' && matrix.who == 'leon' && vars.EP_PUBLISH_HOLD != '1'
         run: python -m clipbot.ep_publish
       - name: Delete clip releases older than 30 days (their Discord offers have expired)
         if: always() && matrix.who == 'leon'

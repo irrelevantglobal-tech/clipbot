@@ -189,7 +189,8 @@ def main():
         return
     common.channel_gate()
     uploads = common.recent_uploads(50)            # raises if YouTube cannot be read -> nothing uploaded
-    marathon = common.marathon_mode()
+    # CLIPBOT_SHORT_SLOTS (Leon 19 Nov: 6 a day) sets the Short slots for regular streams too, not only a marathon's 72 h
+    marathon = common.marathon_mode() or bool(os.environ.get("CLIPBOT_SHORT_SLOTS", "").strip())
     print("marathon mode: the next free hour 09:00-23:00 UK, no daily cap" if marathon else "normal: up to 2 Shorts a day")
     taken = [x["at"] for x in ledger if x.get("at")]
     work = os.path.abspath("work")
