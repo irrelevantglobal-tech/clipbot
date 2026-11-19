@@ -29,6 +29,23 @@ class Guard(unittest.TestCase):
         self.assertEqual(rn.count_hits(hits, w), len(hits))
         self.assertEqual(rn.count_hits(miss, w), 0)
 
+    def test_surname_inside_another_persons_name_is_skipped_counted_never_printed(self):
+        """Boss 19 Nov: GTA 6's opening credits list a stranger who shares the surname. Sentinels for both cases."""
+        w, nm = rn.terms(FAKE), rn.names(FAKE)
+        self.assertEqual(nm, [("jane", "doelittle")])
+        credits = "Art Production\nJames Nicholson\nadam doelittle\nJason Hayes"
+        self.assertEqual(rn.frame_hit(credits, w, nm), (False, 1))                   # a stranger: skipped, counted
+        for his in ("Jane Doelittle", "JANE\n\nDOELITTLE", "DOELITTLE", "Mr Doelittle", "Hello Doelittle",
+                    "adam doelittle and later DOELITTLE alone", "adam doelittle\nJane Doelittle", "adamdoelittle"):
+            self.assertTrue(rn.frame_hit(his, w, nm)[0], his)                       # his name, or not explainable: still a hit
+        with mock.patch.dict(os.environ, {"CLIPBOT_REALNAME": FAKE}), mock.patch.object(rn.shutil, "which", return_value="/x"), \
+                mock.patch.object(rn, "_frames", return_value=["a", "b"]), mock.patch.object(rn, "_ocr", return_value=[credits, "WASTED"]):
+            r = rn.check("credits.mp4")
+        self.assertTrue(r["ok"])
+        self.assertEqual(r["surname_skips"], 1)
+        self.assertIn("1 surname-in-another-name skip", rn.line(r))
+        self.assertNotIn("adam", rn.line(r).lower())
+
     def test_fail_closed(self):
         with mock.patch.dict(os.environ, {"CLIPBOT_REALNAME": ""}):
             r = rn.check("nothing.mp4")

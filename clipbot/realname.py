@@ -32,9 +32,59 @@ def fold(text):
     return re.sub(r"[^a-z]", "", str(text).lower().translate(FOLD))
 
 
-def count_hits(texts, words):
+def names(raw=None):
+    """(given, surname) folded, from every multi-word term ("First Last"): used to tell HIS surname from a stranger's."""
+    raw = os.environ.get("CLIPBOT_REALNAME", "") if raw is None else raw
+    out = []
+    for x in raw.split(","):
+        parts = [fold(p) for p in x.split() if fold(p)]
+        if len(parts) >= 2:
+            out.append((parts[0], parts[-1]))
+    return out
+
+
+# Words that can sit right before a surname without being someone's first name ("Mr Smith", "by Smith", "Hello Smith"):
+# after one of these the surname still counts as HIS (fail-closed).
+NOT_GIVEN = {"mr", "mrs", "ms", "miss", "dr", "sir", "the", "and", "for", "from", "with", "dear", "hello", "hey", "user", "player",
+             "account", "signed", "name", "welcome", "back", "profile", "online", "offline", "playing", "who", "by", "to", "of",
+             "in", "as", "is", "at", "on", "my", "your", "his", "her", "you", "team", "family"}
+
+
+def _style(tok):
+    s = re.sub(r"[^A-Za-z]", "", tok)
+    return "upper" if s.isupper() else "lower" if s.islower() else "title" if s[:1].isupper() and s[1:].islower() else "mixed"
+
+
+def frame_hit(text, words, nm=()):
+    """(hit, skipped) for one frame's text. Boss 19 Nov: a SURNAME-only match is ignored when that surname sits right after a
+    DIFFERENT given name (a stranger who shares it: GTA 6's opening credits list one). Every occurrence must be explained
+    that way, or it is a hit. Full-name and handle matches are untouched (plain folded substring, fail-closed)."""
+    full = fold(text)
+    skipped = 0
+    for w in words:
+        if w not in full:
+            continue
+        givens = [g for g, s in nm if s == w]
+        if givens:   # w is a bare surname of his
+            others = 0
+            for ln in str(text).splitlines():   # a name pair sits on ONE line, written the same way (credits style)
+                raw = [t for t in ln.split() if fold(t)]
+                for i, t in enumerate(raw):
+                    if fold(t) != w or i == 0:
+                        continue
+                    p = raw[i - 1]
+                    if 3 <= len(fold(p)) <= 12 and fold(p) not in givens and fold(p) not in NOT_GIVEN and _style(p) == _style(t):
+                        others += 1
+            if others and others == full.count(w):
+                skipped += 1
+                continue
+        return True, skipped
+    return False, skipped
+
+
+def count_hits(texts, words, nm=()):
     """Frames whose text contains any term (after folding)."""
-    return sum(1 for t in texts if any(w in fold(t) for w in words))
+    return sum(1 for t in texts if frame_hit(t, words, nm)[0])
 
 
 def _frames(path, out_dir, sample_s=SAMPLE_S):
@@ -83,9 +133,12 @@ def check(path, sample_s=SAMPLE_S):
     try:
         frames = _frames(path, tmp, sample_s)
         texts = _ocr(frames)
-        res.update(frames=len(frames), text_frames=sum(1 for t in texts if t.strip()), hits=count_hits(texts, words))
+        nm = names()
+        per = [frame_hit(t, words, nm) for t in texts]
+        res.update(frames=len(frames), text_frames=sum(1 for t in texts if t.strip()), hits=sum(1 for h, _ in per if h))
         # WHERE, never what: the video seconds of each hit frame (+- sample_s), so a hold can be checked by eye
-        res["hit_at"] = [round(i * sample_s, 1) for i, t in enumerate(texts) if any(w in fold(t) for w in words)]
+        res["hit_at"] = [round(i * sample_s, 1) for i, (h, _) in enumerate(per) if h]
+        res["surname_skips"] = sum(s for _, s in per)   # a count only: frames where his surname was a stranger's
         if not frames:
             res["error"] = "no frames read"
         else:
@@ -99,7 +152,9 @@ def check(path, sample_s=SAMPLE_S):
 
 def line(res):
     """Log line: counts only, never the matched text or the terms."""
+    skips = res.get("surname_skips") or 0
     return (f"real-name check: {res['frames']} frames, {res['text_frames']} with text, {res['hits']} name hit(s)"
+            f"{f', {skips} surname-in-another-name skip(s)' if skips else ''}"
             f"{', ERROR ' + res['error'] if res['error'] else ''} -> {'clear' if res['ok'] else 'HELD'}")
 
 
