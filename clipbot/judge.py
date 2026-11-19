@@ -33,6 +33,9 @@ KINDS = {"reaction", "fail", "chaos", "scare", "banter", "clutch", "glitch", "st
 # 1.0 offered 42 (33%). He approves ~1-2 per batch and can post 2 a day (4 in a marathon), so fewer, better cards.
 # On the 5 test windows it sends picks from the 6 Nov stretches he liked and ~none from 11-12 Nov (0/24 approved).
 FLOOR = 2.5
+# Kick has no chat replay (19 Nov), so rank() never gets the chat boost that Twitch moments got (often +0.5-1.0). On the first
+# marathon windows that left 4 of 36 judged moments over 2.5 although the judge called several 5-6/10 fails and reactions.
+FLOOR_NO_CHAT = 2.0
 FALLBACK_FLOOR = 20.0                # heuristic score needed when the judge is down (45% approved on the same 54)
 SCAN_CAP = 30.0                      # scan score counted at most this much in rank()
 

@@ -40,6 +40,7 @@ HORIZON_H = 24
 # fresh YouTube uploads per run, 0 = no cap. Marathon auto-publish (boss 19 Nov): the quota (10k/day, ~1,600 an upload)
 # goes to episodes first, so Shorts get CLIPBOT_MAX_UPLOADS per publish run (repo variable; twice-daily cron).
 MAX_UPLOADS = int(os.environ.get("CLIPBOT_MAX_UPLOADS") or 0)
+VIEWER_RANK = 3.0
 
 
 def yt_title(t):
@@ -193,7 +194,10 @@ def main():
     taken = [x["at"] for x in ledger if x.get("at")]
     work = os.path.abspath("work")
     os.makedirs(work, exist_ok=True)
-    order = sorted(items, key=lambda x: (int(x.get("run_id") or 0), x.get("n", 0)))
+    # Leon 19 Nov ("the best 6"): what a human approved goes first, then auto-approved clips BEST first (judge rank; a viewer
+    # clip has no rank but a viewer chose it: VIEWER_RANK), then oldest; the daily budget takes the top, the rest waits
+    order = sorted(items, key=lambda x: (1 if x.get("auto") else 0, -float(x.get("rank") or (VIEWER_RANK if x.get("auto") else 0)),
+                                         int(x.get("run_id") or 0), x.get("n", 0)))
     fresh = 0
     for i, it in enumerate(order):
         marker = f"clipbot:{it['id']}"

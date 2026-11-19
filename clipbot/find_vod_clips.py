@@ -357,7 +357,7 @@ def shortlist(wins, words, dur):
     return cands
 
 
-def choose(cands, wav, dur, stream_title, n_pick, words, ask=None):
+def choose(cands, wav, dur, stream_title, n_pick, words, ask=None, floor=None):
     """[(candidate, title)] worth offering, best first: everything that clears the floor and no veto, so the caller can
     fall through to the next one when a cut fails its footage checks. The caller offers at most n_pick of them, and
     none at all if nothing in the window is good enough (owner rejected 0/24 forced picks on 11-12 Nov).
@@ -381,14 +381,15 @@ def choose(cands, wav, dur, stream_title, n_pick, words, ask=None):
         for c in cands:                              # recorded in the manifest, so a 0-pick window can be audited
             v = c.get("judge")
             c["why"] = ("not judged" if not v else f"vetoed ({v['who']}, {v['kind']})" if judge.vetoed(v)
-                        else f"below the floor {judge.FLOOR}" if judge.rank(c) < judge.FLOOR else "overlaps a better pick")
-        pool = [c for c in cands if c.get("judge") and not judge.vetoed(c["judge"]) and judge.rank(c) >= judge.FLOOR]
+                        else f"below the floor {floor or judge.FLOOR}" if judge.rank(c) < (floor or judge.FLOOR) else "overlaps a better pick")
+        fl = judge.FLOOR if floor is None else floor
+        pool = [c for c in cands if c.get("judge") and not judge.vetoed(c["judge"]) and judge.rank(c) >= fl]
         pool.sort(key=lambda c: -judge.rank(c))
         for c in pool:
             b = c["judge"]["bounds"] or (c["s"], c["e"])
             ws = c.get("words") or words
             take(c, *snap(ws, b[0], b[1], dur), ws, c["judge"]["title"])
-        print(f"{len(out)} candidates clear the floor {judge.FLOOR} with no veto: "
+        print(f"{len(out)} candidates clear the floor {fl} with no veto: "
               + ", ".join(f"{c['s']:.0f}s rank {judge.rank(c):.2f}" for c, _ in out))
         # Titles: the live ranker's prompt (first-person hooks, tuned 10-29) over the re-heard text, which no longer
         # titles mishearings. The judge's own title is the fallback, a quote the last resort (main()).
@@ -518,7 +519,7 @@ def main():
         # no limit". Everything that clears the bar among the stretches the judge hears is offered.
         print(f"marathon: no pick cap (was {a.picks}), up to all {judge.MAX_JUDGE} judged stretches that clear the bar")
         a.picks = judge.MAX_JUDGE
-    ranked = choose(cands, wav, dur, v["title"], a.picks, words)
+    ranked = choose(cands, wav, dur, v["title"], a.picks, words, floor=judge.FLOOR_NO_CHAT if kick else None)   # no chat replay on Kick
     queue = [(m, m["note"]) for m in marked] + ranked   # crew-marked moments are always offered, as before
     tries = len(marked) + min(len(ranked), a.picks + 4)  # a few spares for cuts that fail the footage checks
 
