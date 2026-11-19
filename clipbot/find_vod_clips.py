@@ -27,7 +27,7 @@ import shutil
 import subprocess
 import sys
 
-from . import chat, common, judge, render
+from . import chat, common, judge, render, vision
 from polished import source  # noqa: E402 - Kick VODs (owner 17 Nov: the marathon streams on Kick only)
 
 GAP = 1.2
@@ -525,7 +525,7 @@ def main():
     queue = [(m, m["note"]) for m in marked] + ranked   # crew-marked moments are always offered, as before
     tries = len(marked) + min(len(ranked), a.picks + 4)  # a few spares for cuts that fail the footage checks
 
-    clips, refused, static, picked, tried = [], [], [], 0, 0
+    clips, refused, static, rejected, picked, tried = [], [], [], [], 0, 0
     for c, title in queue[:tries]:
         marked_one = "note" in c
         if not marked_one and picked >= a.picks:
@@ -560,9 +560,28 @@ def main():
             os.remove(tmp)
             continue
         shutil.move(tmp, raw)
+        title = title or quote_title(c["text"])
+        vz = None
+        if not marked_one:
+            # 19 Nov quality check: LOOK at the cut before offering it (menus / radio wheel / blur / black, a title that
+            # is not visibly true, a payoff stranded at the end); the title comes from what is on screen
+            vz = vision.check(raw, title, c["text"], workdir=a.out)
+            print(f"vision {c['s'] + base:.0f}s: {vz['verdict']} ({vz['reason'][:120]}) title={vz['title']!r} trim={vz['trim']} ${vz['cost']}")
+            if vz["verdict"] == "reject":
+                rejected.append(round(c["s"] + base))
+                c["why"] = f"vision check: {vz['reason'][:120]}"
+                os.remove(raw)
+                continue
+            if vz["verdict"] == "trim" and vz["trim"]:
+                ta, tb = vz["trim"]
+                vision.trim_file(raw, ta, tb, raw + ".trim.mp4")
+                shutil.move(raw + ".trim.mp4", raw)
+                heard = [{**w, "s": round(w["s"] - ta, 2), "e": round(w["e"] - ta, 2)} for w in heard if ta <= w["s"] < tb]
+                c["s"], c["e"] = c["s"] + ta, c["s"] + tb
+            if vz.get("title"):
+                title = vz["title"]
         c["why"] = "offered"
         picked += 0 if marked_one else 1
-        title = title or quote_title(c["text"])
         info = render.render(raw, os.path.join(a.out, f"clip{n}.mp4"), os.path.join(a.out, f"preview{n}.mp4"), hook=title,
                              words=heard)
         # raw{n}.mp4 stays in the artifact so a title edited in Discord can be re-rendered
@@ -571,7 +590,8 @@ def main():
         clips.append({"n": n, "start": round(c["s"] + base, 2), "end": round(c["e"] + base, 2), "title": title, "score": c["score"],
                       **({"judge": jd["score"], "kind": jd["kind"], "who": jd["who"], "rank": round(judge.rank(c), 2)} if jd else {}),
                       "match": r, "still": still, **({"chat": list(c["chat"])} if c.get("chat") else {}),
-                      "quote": c["text"][:300], **({"marked": True} if marked_one else {}), **copy, **info})
+                      "quote": c["text"][:300], **({"marked": True} if marked_one else {}),
+                      **({"vision": {k: vz[k] for k in ("verdict", "reason", "trim", "cost")}} if vz else {}), **copy, **info})
         print(f"clip {n}: {c['s'] + base:.0f}-{c['e'] + base:.0f}s score {c['score']} judge {jd.get('score')} "
               f"match {r} still {still} -> {info}")
     if len(refused) >= 2 and len(refused) * 2 >= tried:
@@ -582,6 +602,7 @@ def main():
     json.dump({"vod": a.vod, "batch": batch, "window": [base, base + dur] if windowed else None, "kind": "vod",
                "vod_title": v["title"], "vod_created": v["created_at"], "clips": clips,
                **({"refused": refused} if refused else {}), **({"static": static} if static else {}),
+               **({"vision_rejected": rejected} if rejected else {}),
                "considered": considered(cands, base)},
               open(os.path.join(a.out, "manifest.json"), "w", encoding="utf-8"), ensure_ascii=False, indent=1)
     os.remove(wav)

@@ -1,0 +1,30 @@
+name: vision-probe
+# Runs clipbot/vision.py on clips already cut (19 Nov quality check), e.g. the two the boss rejected. By hand only.
+on:
+  workflow_dispatch:
+    inputs:
+      clips: {description: "batch:n list, e.g. 1795045774-7201:1,1795045774-3601:1", required: true}
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      CLIPBOT_ZIP_KEY: ${{ secrets.CLIPBOT_ZIP_KEY }}
+      CLIPBOT_ID: ${{ secrets.CLIPBOT_ID }}
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GTA6_ANTHROPIC_KEY: ${{ secrets.GTA6_ANTHROPIC_KEY }}
+      CLIPS: ${{ inputs.clips }}
+    steps:
+      - name: Check input
+        run: '[[ "$CLIPS" =~ ^[0-9:,-]{3,200}$ ]] || { echo "bad input"; exit 1; }'
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: for i in 1 2 3 4; do sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg && break; echo "apt failed ($i), retrying in 30 s"; sleep 30; done; command -v ffmpeg > /dev/null
+      - run: pip install -q -r requirements.txt
+      - name: Probe
+        run: python tests/probe/vision_probe.py "$CLIPS"
