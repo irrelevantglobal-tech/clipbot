@@ -33,7 +33,7 @@ class Guard(unittest.TestCase):
         """Boss 19 Nov: GTA 6's opening credits list a stranger who shares the surname. Sentinels for both cases."""
         w, nm = rn.terms(FAKE), rn.names(FAKE)
         self.assertEqual(nm, [("jane", "doelittle")])
-        credits = "Art Production\nJames Nicholson\nadam doelittle\nJason Hayes"
+        credits = "Art Production\nSam Placeholder\nadam doelittle\nRory Example"
         self.assertEqual(rn.frame_hit(credits, w, nm), (False, 1))                   # a stranger: skipped, counted
         for his in ("Jane Doelittle", "JANE\n\nDOELITTLE", "DOELITTLE", "Mr Doelittle", "Hello Doelittle",
                     "adam doelittle and later DOELITTLE alone", "adam doelittle\nJane Doelittle", "adamdoelittle"):
