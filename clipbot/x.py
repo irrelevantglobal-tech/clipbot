@@ -81,6 +81,8 @@ def x_text(it):
     title = publish.mask(legacy.fix(hook if hook and not hook.startswith("#") else it["title"]).strip())
     link = f"https://{common.live_url()}" if common.live_url() else common.live_text()
     tags = tags_for(it)
+    if it.get("x_text"):   # Studio's X copy (24 Nov): ends in a question, because X ranks replies far above likes; no tags
+        title, tags = publish.mask(legacy.fix(str(it["x_text"])).strip()), []
     while True:
         tail = f"\n\nLive on {common.live_platform()}: {link}" + (f"\n\n{' '.join(tags)}" if tags else "")
         room = LIMIT - (len(tail) - len(link) + URL_LEN)

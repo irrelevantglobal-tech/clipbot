@@ -63,5 +63,21 @@ class Cover(unittest.TestCase):
         self.assertEqual(pv.call_args[0][2]["thumb_offset"], "5000")
 
 
+class Copy24Nov(unittest.TestCase):
+    def test_instagram_keeps_five_hashtags(self):
+        cap = "hook\n\nLive on Kick: kick.com/x\n\n#a #b #c #d #e #f #a #g"
+        out = instagram.cap_tags(cap)
+        self.assertEqual(out.split("\n\n")[-1].split(), ["#a", "#b", "#c", "#d", "#e"])
+        self.assertIn("Live on Kick: kick.com/x", out)
+
+    def test_x_text_replaces_the_hook_line_and_is_checked(self):
+        from clipbot import x
+        it = {"title": "GTA 6: T", "tiktok_caption": "old hook\n\n#gta6", "x_text": "Would you have jumped too?"}
+        t = x.x_text(it)
+        self.assertTrue(t.startswith("Would you have jumped too?"))
+        self.assertNotIn("old hook", t)
+        self.assertFalse(common.copy_ok({**it, "copy_std": "1119", "x_text": "see twinkiesghost on twitch.tv"}))
+
+
 if __name__ == "__main__":
     unittest.main()

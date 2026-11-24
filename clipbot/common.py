@@ -503,7 +503,7 @@ def copy_problems(it):
     """Leon's 19 Nov copy rules, checked on the FINISHED item (boss 23 Nov: 18 queued rows all failed them). [] = clean.
     Never on an item that has no copy_std: that alone is a refusal."""
     out = []
-    texts = [str(it.get(k) or "") for k in ("title", "description", "tiktok_caption", "ig_caption", "tiktok_hook", "ig_hook")]
+    texts = [str(it.get(k) or "") for k in ("title", "description", "tiktok_caption", "ig_caption", "tiktok_hook", "ig_hook", "x_text")]
     tags = [str(t) for k in ("hashtags", "tiktok_hashtags", "ig_hashtags") for t in (it.get(k) or [])]
     blob = " ".join(texts + tags)
     if _OTHER_GAME.search(blob):

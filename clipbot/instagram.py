@@ -15,6 +15,7 @@ Idempotent: before posting, Instagram's own list of recent posts is checked for 
 """
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -75,8 +76,26 @@ def ig_caption(hook, tags):
     return f"{hook}\n\nLive on {common.live_platform()}: {live or common.BRAND}\n\n{' '.join(tags)}".strip()[:2200]
 
 
+MAX_TAGS = 5      # Instagram allows 5 hashtags a caption (Dec 2025); extras are dropped from the end
+
+
+def cap_tags(text, n=MAX_TAGS):
+    """Keep the first n distinct hashtags of a caption and drop the rest (the text around them stays)."""
+    seen = []
+
+    def keep(m):
+        t = m.group(0).lower()
+        if t in seen:
+            return ""
+        seen.append(t)
+        return m.group(0) if len(seen) <= n else ""
+    out = re.sub(r"#\w+", keep, text)
+    out = re.sub(r"[ \t]{2,}", " ", out)
+    return re.sub(r"[ \t]+\n", "\n", out).strip()
+
+
 def caption_for(it, work=None):
-    return legacy.fix(_caption_for(it, work))
+    return cap_tags(legacy.fix(_caption_for(it, work)))
 
 
 def _caption_for(it, work=None):
