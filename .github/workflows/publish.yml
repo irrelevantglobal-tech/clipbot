@@ -14,6 +14,7 @@ on:
         description: "0 = episodes only (Forge, marathon auto-publish: Shorts keep to the twice-daily runs, quota)"
         default: "1"
   # Times are UTC. Re-pushed 2026-10-30: schedules stopped firing after the repo went public.
+  # Schedule re-registered 2026-11-24 (no scheduled run since the lanes were re-enabled).
   schedule:
     - cron: "17 6 * * *"
     - cron: "17 17 * * *"

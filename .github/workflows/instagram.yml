@@ -8,6 +8,7 @@ on:
         description: "1 = do everything except the final publish"
         default: "0"
   # Times are UTC. Re-pushed 2026-10-30: schedules stopped firing after the repo went public.
+  # Schedule re-registered 2026-11-24 (no scheduled run since the lanes were re-enabled).
   schedule:
     - cron: "5 8-23 * * *"   # hourly: marathon Shorts can take any hour 09:00-23:00 UK (GMT or BST)
 concurrency:

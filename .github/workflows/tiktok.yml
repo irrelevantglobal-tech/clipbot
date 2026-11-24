@@ -12,6 +12,7 @@ on:
         description: "only try this many Shorts (blank = all)"
         default: ""
   # Times are UTC. Re-pushed 2026-10-30: schedules stopped firing after the repo went public.
+  # Schedule re-registered 2026-11-24 (no scheduled run since the lanes were re-enabled).
   schedule:
     - cron: "40 7 * * *"
     - cron: "40 18 * * *"
