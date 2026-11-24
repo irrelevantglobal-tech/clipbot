@@ -488,7 +488,9 @@ def worker(path, payload=None, method=None):
 # Boss 19 Nov (two Reels with old, wrong-game copy went out 5 min apart): (1) only copy written by the vision writer
 # (clipbot/vision.py: it watched the clip, Leon's 19 Nov standard) may be posted on ANY platform; (2) a lane posts at
 # most ONE item a run and never within PACE_H of its own last post, whatever backlog it has.
-PACE_H = 2.0
+PACE_H = 3.0                     # Leon 24 Nov: spread out (was 2.0)
+DAILY_CAP = 4                    # at most this many posts a day per lane (UTC day; the worker counts them)
+STAGGER_MIN = 60                 # a lane also waits this long after ANY lane's post, so one clip never hits every platform at once
 
 
 _OTHER_GAME = re.compile(r"(?i)(?<![A-Za-z0-9])#?(gtav|gta5|gtaonline|seaofthieves|sea of thieves|ark|ark survival\w*|cyberpunk\w*|"
@@ -529,7 +531,8 @@ def pace_ok(lane, platform_last=None, now=None):
     lane (set when the post is reported) and, if given, the platform's own newest post time. Unreadable = False."""
     now = now or datetime.now(UTC)
     try:
-        rec = worker(f"/clipbot/lastpost?lane={lane}").get("at")
+        got = worker(f"/clipbot/lastpost?lane={lane}")
+        rec, rec_today = got.get("at"), got.get("today", 0)
     except Exception as e:   # noqa: BLE001 - fail closed: no proof of the gap, no post
         print(f"{lane}: could not read the last post time ({str(e)[:120]}); nothing posted this run")
         return False
@@ -544,6 +547,19 @@ def pace_ok(lane, platform_last=None, now=None):
     if lasts and now - max(lasts) < timedelta(hours=PACE_H):
         print(f"{lane}: last post {max(lasts).strftime('%H:%M')}Z is under {PACE_H:g} h ago; the next one waits for a later run")
         return False
+    if int(rec_today or 0) >= DAILY_CAP:
+        print(f"{lane}: {rec_today} posts today already (cap {DAILY_CAP}); the next one waits for tomorrow")
+        return False
+    for other in ("ig", "x", "tt"):                       # stagger: a nicety, so an unreadable answer never blocks a post
+        if other == lane:
+            continue
+        try:
+            o = worker(f"/clipbot/lastpost?lane={other}").get("at")
+            if o and now - datetime.fromisoformat(str(o).replace("Z", "+00:00")) < timedelta(minutes=STAGGER_MIN):
+                print(f"{lane}: {other} posted under {STAGGER_MIN} min ago; this lane waits so the platforms are spread out")
+                return False
+        except Exception:   # noqa: BLE001
+            pass
     return True
 
 

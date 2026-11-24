@@ -198,8 +198,27 @@ def post_carousel(tok, it, work, dry):
         unpark(parked)
 
 
-def post_reel(tok, path, caption, dry):
-    return post_video(tok, path, {"media_type": "REELS", "caption": caption, "share_to_feed": "true"}, dry)
+def cover_ms(it, path):
+    """The Reel's cover frame, in ms. Studio sends cover_ms (a frame inside the payoff); without it, 30% in, never the
+    end card the platform would otherwise pick (Leon 24 Nov)."""
+    try:
+        v = int(it.get("cover_ms") or 0)
+    except (TypeError, ValueError):
+        v = 0
+    if v > 0:
+        return v
+    try:
+        return max(int(render.duration(path) * 1000 * 0.3), 0)
+    except Exception:   # noqa: BLE001 - a missing cover is better than a missing post
+        return 0
+
+
+def post_reel(tok, path, caption, dry, it=None):
+    params = {"media_type": "REELS", "caption": caption, "share_to_feed": "true"}
+    c = cover_ms(it or {}, path)
+    if c:
+        params["thumb_offset"] = str(c)
+    return post_video(tok, path, params, dry)
 
 
 def post_story(tok, it, path, dry):
@@ -329,7 +348,7 @@ def main():
                 if not dry:
                     common.worker("/clipbot/igdone", {"id": it["id"], "media_id": same["id"], "dup": True})
                 continue
-            mid, link = post_reel(tok, path, caption, dry)
+            mid, link = post_reel(tok, path, caption, dry, it)
             if mid is None:
                 print(f"{it['id']}: DRY, container FINISHED, not published. caption={json.dumps(caption, ensure_ascii=False)[:300]}")
                 post_comment(tok, it, None, dry)

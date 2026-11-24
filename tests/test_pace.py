@@ -1,0 +1,67 @@
+"""Leon 24 Nov: spread the posts out (3 h apart, 4 a day per lane, platforms staggered) and use a real cover frame."""
+import os
+import sys
+import unittest
+from datetime import UTC, datetime, timedelta
+from unittest import mock
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+os.environ.setdefault("CLIPBOT_ID", '{"login": "x", "brand": "X", "twitch_uid": "1", "channel": "UCx", "ig": "", "legacy": []}')
+
+from clipbot import common, instagram  # noqa: E402
+
+
+def iso(h_ago):
+    return (datetime.now(UTC) - timedelta(hours=h_ago)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def fake(own, today=0, others=None):
+    others = others or {}
+
+    def w(path, *a, **k):
+        lane = path.split("lane=")[1]
+        return {"at": own if lane == "ig" else others.get(lane), "today": today if lane == "ig" else 0}
+    return w
+
+
+class Pace(unittest.TestCase):
+    def test_three_hours_apart(self):
+        with mock.patch.object(common, "worker", fake(iso(2.5))):
+            self.assertFalse(common.pace_ok("ig"))
+        with mock.patch.object(common, "worker", fake(iso(3.2))):
+            self.assertTrue(common.pace_ok("ig"))
+
+    def test_four_a_day_cap(self):
+        with mock.patch.object(common, "worker", fake(iso(5), today=4)):
+            self.assertFalse(common.pace_ok("ig"))
+        with mock.patch.object(common, "worker", fake(iso(5), today=3)):
+            self.assertTrue(common.pace_ok("ig"))
+
+    def test_other_platform_just_posted_makes_this_lane_wait(self):
+        with mock.patch.object(common, "worker", fake(iso(5), others={"tt": iso(0.3)})):
+            self.assertFalse(common.pace_ok("ig"))
+        with mock.patch.object(common, "worker", fake(iso(5), others={"tt": iso(1.5)})):
+            self.assertTrue(common.pace_ok("ig"))
+
+    def test_unreadable_own_record_posts_nothing(self):
+        def boom(path, *a, **k):
+            raise RuntimeError("down")
+        with mock.patch.object(common, "worker", boom):
+            self.assertFalse(common.pace_ok("ig"))
+
+
+class Cover(unittest.TestCase):
+    def test_studio_cover_wins_default_is_30_percent(self):
+        self.assertEqual(instagram.cover_ms({"cover_ms": 7300}, "x.mp4"), 7300)
+        with mock.patch.object(instagram.render, "duration", return_value=40.0):
+            self.assertEqual(instagram.cover_ms({}, "x.mp4"), 12000)
+            self.assertEqual(instagram.cover_ms({"cover_ms": "junk"}, "x.mp4"), 12000)
+
+    def test_reel_container_carries_thumb_offset(self):
+        with mock.patch.object(instagram, "post_video", return_value=("1", "l")) as pv:
+            instagram.post_reel({}, "x.mp4", "cap", True, {"cover_ms": 5000})
+        self.assertEqual(pv.call_args[0][2]["thumb_offset"], "5000")
+
+
+if __name__ == "__main__":
+    unittest.main()
