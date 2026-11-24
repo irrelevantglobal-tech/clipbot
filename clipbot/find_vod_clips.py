@@ -582,6 +582,8 @@ def main():
             if vz.get("title"):
                 title = vz["title"]
         vcopy = vision.copy_for(vz, game, common.BRAND) if vz and vz["verdict"] in ("pass", "trim") else None
+        if vcopy:   # boss 19 Nov: the burned-in hook IS the vision title (it was the old guessed title, rendered before)
+            title = vcopy["title"]
         c["why"] = "offered"
         picked += 0 if marked_one else 1
         info = render.render(raw, os.path.join(a.out, f"clip{n}.mp4"), os.path.join(a.out, f"preview{n}.mp4"), hook=title,

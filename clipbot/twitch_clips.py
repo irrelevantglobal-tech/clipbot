@@ -12,7 +12,7 @@ import subprocess
 import sys
 import time
 
-from . import common, render
+from . import common, render, vision
 
 
 def clean_emoji(t):
@@ -57,13 +57,26 @@ def main():
             os.remove(raw)
             continue
         words = render.transcribe(raw)
-        hook = clean_emoji(c["title"])
-        info = render.render(raw, os.path.join(a.out, f"clip{n}.mp4"), os.path.join(a.out, f"preview{n}.mp4"), hook=hook, words=words)
-        game = games.get(c.get("game_id"), "")
-        copy = common.clip_copy(hook, game=game, transcript=" ".join(w["w"] for w in words))
-        clips.append({"n": n, "slug": c["id"], "title": hook, "creator": c.get("creator_name", ""),
-                      "start": 0, "end": info["duration"], **copy, **info})
-        print(f"clip {n}: {c['id'][:30]} {info['duration']:.0f}s game={copy['game'] or '?'} tags={copy['hashtags']}")
+        viewer_title = clean_emoji(c["title"]).strip()
+        # Boss 19 Nov: same rule as kick_clips.py. Game = Twitch's own game for the clip; title + burned-in hook ONLY from the
+        # vision writer; the viewer's clip title is never public text. No vision copy = no hook, no copy_std, never posted.
+        raw_game = games.get(c.get("game_id"), "")
+        game = vision.game_name(raw_game) or raw_game.strip()
+        vz = vision.check(raw, viewer_title, " ".join(w["w"] for w in words), workdir=a.out, game=game)
+        vcopy = vision.copy_for(vz, game, common.BRAND) if game and vz["verdict"] in ("pass", "trim") else None
+        if vcopy and vz["verdict"] == "trim" and vz["trim"]:
+            ta, tb = vz["trim"]
+            vision.trim_file(raw, ta, tb, raw + ".trim.mp4")
+            shutil.move(raw + ".trim.mp4", raw)
+            words = [{**w, "s": round(w["s"] - ta, 2), "e": round(w["e"] - ta, 2)} for w in words if ta <= w["s"] < tb]
+        info = render.render(raw, os.path.join(a.out, f"clip{n}.mp4"), os.path.join(a.out, f"preview{n}.mp4"),
+                             hook=vcopy["title"] if vcopy else "", words=words)
+        copy = ({**{k: x for k, x in vcopy.items() if k != "title"}, "copy_std": vision.COPY_STD} if vcopy
+                else {"description": "", "hashtags": [], "tags": [], "game": game})
+        clips.append({"n": n, "slug": c["id"], "title": vcopy["title"] if vcopy else "No copy yet", "viewer_title": viewer_title,
+                      "creator": c.get("creator_name", ""), "start": 0, "end": info["duration"],
+                      "vision": {k: vz[k] for k in ("verdict", "reason", "cost", "lane")}, **copy, **info})
+        print(f"clip {n}: {c['id'][:30]} {info['duration']:.0f}s game={game or '?'} vision={vz['verdict']} tags={copy.get('hashtags')}")
     if not clips:
         raise SystemExit("nothing to offer")
     batch = str(int(time.time()))

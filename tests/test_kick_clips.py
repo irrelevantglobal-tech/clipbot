@@ -31,6 +31,10 @@ class Run(unittest.TestCase):
         self.listed = []
         self.dur = 25.0
         self.fail_ids = set()
+        self.hooks = []
+        self.vz = lambda raw, title, transcript, workdir=None, game="": {
+            "verdict": "pass", "reason": "ok", "trim": None, "moment": "Boat Flips Into The Marina", "line": "I flipped it.",
+            "tag": "#BoatFlip", "hook": "Wait for the splash", "title": "Boat Flips Into The Marina", "cost": 0.0, "lane": "test"}
 
         def worker(path, body=None):
             assert path == "/clipbot/kickclips"
@@ -43,6 +47,7 @@ class Run(unittest.TestCase):
             open(out, "wb").write(b"x")
 
         def rend(raw, out, prev, hook, words):
+            self.hooks.append(hook)
             open(out, "wb").write(b"v")
             return {"duration": self.dur, "w": 1080, "h": 1920}
         self.p = [mock.patch.object(K.source, "kick_clips", side_effect=lambda since: [c for c in self.listed if c["created"] >= since]),
@@ -52,6 +57,7 @@ class Run(unittest.TestCase):
                   mock.patch.object(K.render, "duration", side_effect=lambda p: self.dur),
                   mock.patch.object(K.render, "transcribe", return_value=[{"w": "hello", "s": 0, "e": 1}]),
                   mock.patch.object(K.render, "render", side_effect=rend),
+                  mock.patch.object(K.vision, "check", side_effect=lambda *a, **k: self.vz(*a, **k)),
                   mock.patch.object(K.common, "clip_copy", return_value={"description": "d", "hashtags": ["#gta6"], "tags": [], "game": ""}),
                   mock.patch.object(K.time, "time", return_value=NOW)]
         for p in self.p:
@@ -104,6 +110,43 @@ class Run(unittest.TestCase):
         rc, man, _ = self.run_it("--clips", clip(2, 0)["id"])
         self.assertEqual(self.claimed, [])
         self.assertEqual([c["slug"] for c in man["clips"]], [clip(2, 0)["id"]])
+
+    def test_viewer_title_is_a_record_only_never_the_title_or_the_burned_in_hook(self):
+        self.listed = [clip(1, 60, title="He made it on Claude"), clip(2, 30, title="Sea of Thieves lol")]
+        for c in self.listed:
+            c["category"] = "Grand Theft Auto VI"
+        rc, man, _ = self.run_it()
+        self.assertEqual(len(man["clips"]), 2)
+        for c in man["clips"]:
+            self.assertNotEqual(c["title"].lower(), c["viewer_title"].lower())
+            self.assertNotIn(c["viewer_title"].lower(), c["title"].lower())
+            self.assertTrue(c["title"].startswith("GTA 6: "))
+            self.assertEqual(c["copy_std"], K.vision.COPY_STD)
+            self.assertIn("#GTA6", c["hashtags"])
+        self.assertEqual(man["clips"][0]["viewer_title"], "He made it on Claude")
+        for h in self.hooks:
+            self.assertNotIn(h.lower(), ("he made it on claude", "sea of thieves lol"))
+            self.assertTrue(h.startswith("GTA 6: "))
+
+    def test_no_vision_copy_means_no_hook_no_copy_std_and_never_the_viewer_title(self):
+        self.listed = [clip(1, 60, title="He made it on Claude")]
+        self.vz = lambda *a, **k: {"verdict": "reject", "reason": "menu", "trim": None, "moment": None, "line": None, "tag": None,
+                                   "hook": None, "title": None, "cost": 0.0, "lane": "test"}
+        rc, man, _ = self.run_it()
+        c = man["clips"][0]
+        self.assertEqual(self.hooks, [""])
+        self.assertNotIn("copy_std", c)
+        self.assertEqual(c["hashtags"], [])
+        self.assertEqual(c["description"], "")
+        self.assertNotIn("claude", c["title"].lower())
+        self.assertEqual(c["viewer_title"], "He made it on Claude")
+
+    def test_unchecked_vision_is_treated_as_no_copy(self):
+        self.listed = [clip(1, 60, title="Hello")]
+        self.vz = lambda *a, **k: {"verdict": "unchecked", "reason": "boom", "trim": None, "moment": None, "line": None, "tag": None,
+                                   "hook": None, "title": None, "cost": 0.0, "lane": None}
+        rc, man, _ = self.run_it()
+        self.assertEqual((self.hooks, "copy_std" in man["clips"][0]), ([""], False))
 
 
 if __name__ == "__main__":

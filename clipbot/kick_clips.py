@@ -76,23 +76,32 @@ def main(argv=None):
             os.remove(raw)
             continue
         words = render.transcribe(raw)
-        hook = clean_emoji(c["title"]) if c["title"].strip() else "Kick clip"
-        info = render.render(raw, os.path.join(a.out, f"clip{n}.mp4"), os.path.join(a.out, f"preview{n}.mp4"), hook=hook, words=words)
-        # Boss 19 Nov (two Reels went out with GTA V / Sea of Thieves tags on GTA 6 clips): the game is Kick's own category
-        # for the clip, never a guess, and the copy is the vision writer's (Leon's 19 Nov standard), which WATCHES the clip.
-        # No vision copy = no copy_std, and every posting lane refuses the clip until it has one.
+        viewer_title = clean_emoji(c["title"]).strip()
+        # Boss 19 Nov (two Reels went out with GTA V / Sea of Thieves tags on GTA 6 clips; a YouTube Short went public with a
+        # viewer's clip title "He made it on Claude" burned in): the game is Kick's own category for the clip, never a guess;
+        # the title AND the burned-in hook come ONLY from the vision writer (Leon's 19 Nov standard, it WATCHES the clip). The
+        # viewer's clip title is a hint to the model and a record, never public text. No vision copy = no hook, no copy_std,
+        # and every posting lane refuses the clip.
         game = vision.game_name(c.get("category") or "") or (c.get("category") or "").strip()
         transcript = " ".join(w["w"] for w in words)
-        vz = vision.check(raw, hook, transcript, workdir=a.out, game=game)
+        vz = vision.check(raw, viewer_title, transcript, workdir=a.out, game=game)
         vcopy = vision.copy_for(vz, game, common.BRAND) if game and vz["verdict"] in ("pass", "trim") else None
+        if vcopy and vz["verdict"] == "trim" and vz["trim"]:
+            ta, tb = vz["trim"]
+            vision.trim_file(raw, ta, tb, raw + ".trim.mp4")
+            shutil.move(raw + ".trim.mp4", raw)
+            words = [{**w, "s": round(w["s"] - ta, 2), "e": round(w["e"] - ta, 2)} for w in words if ta <= w["s"] < tb]
+        title = vcopy["title"] if vcopy else "No copy yet"
+        info = render.render(raw, os.path.join(a.out, f"clip{n}.mp4"), os.path.join(a.out, f"preview{n}.mp4"),
+                             hook=vcopy["title"] if vcopy else "", words=words)
         if vcopy:
             copy = {k: x for k, x in vcopy.items() if k != "title"}
             copy["copy_std"] = vision.COPY_STD
         else:
             copy = {"description": "", "hashtags": [], "tags": [], "game": game}
             print(f"{c['id'][:30]}: no vision copy ({vz['verdict']}: {vz['reason'][:120]}); offered without copy, nothing will post it")
-        clips.append({"n": n, "slug": c["id"], "title": hook, "creator": c["creator"], "start": 0, "end": info["duration"],
-                      "vision": {k: vz[k] for k in ("verdict", "reason", "cost", "lane")}, **copy, **info})
+        clips.append({"n": n, "slug": c["id"], "title": title, "viewer_title": viewer_title, "creator": c["creator"], "start": 0,
+                      "end": info["duration"], "vision": {k: vz[k] for k in ("verdict", "reason", "cost", "lane")}, **copy, **info})
         print(f"clip {n}: {c['id'][:30]} {info['duration']:.0f}s by {c['creator'] or '?'} game={game or '?'} "
               f"vision={vz['verdict']} tags={copy.get('hashtags')}")
     with open(os.environ.get("GITHUB_OUTPUT", os.devnull), "a") as f:
