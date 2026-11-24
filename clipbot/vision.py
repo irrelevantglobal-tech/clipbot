@@ -31,6 +31,10 @@ MODELS = [m.strip() for m in (os.environ.get("CLIPBOT_VISION_MODELS") or "gemini
 GEM_CAP = float(os.environ.get("CLIPBOT_VISION_GEM_BUDGET") or 0.60)       # $ of Gemini per run (worst-case checked)
 CLAUDE_CAP = float(os.environ.get("CLIPBOT_VISION_BUDGET") or 0.02)        # $ of Haiku per run, fallback only
 
+# Leon 19 Nov: a character is named in copy ONLY if it is in this list AND the clip shows it (a name tag, a subtitle, a
+# line that says it). Anything else says "the girl", "a cop", "the guy". The model lists what it actually saw in names_seen.
+CAST = ["Jason Duval", "Lucia Caminos", "Cal Hampton", "Boobie Ike", "Dre'Quan Priest", "Raul Bautista", "Brian Heder", "Real Dimez"]
+
 PROMPT = """You are checking one short gaming clip before it is posted as a YouTube Short / TikTok / Reel. The image is a
 contact sheet of the clip: {n} frames left-to-right, top-to-bottom, each stamped with its time in seconds. Length: {dur:.1f} s.
 Game (from the stream): "{game}".
@@ -51,13 +55,16 @@ Then write the copy (for pass or trim), all of it TRUE to what is visibly on scr
   no emojis, no swearing, never a fragment of the transcript.
 - line: ONE first-person sentence about the moment for the YouTube description, casual, at most one emoji, no swearing,
   no content warning.
+- Characters: name one ONLY if it is in this list: {cast}, AND its name or voice is clearly shown in the clip (a name tag,
+  a subtitle, someone saying it). Otherwise describe them ("the girl", "a cop"), never guess or invent a name.
+  names_seen: the list names you based that on ([] if none).
 - tag: ONE CamelCase hashtag for this moment (e.g. "#TigerRunOver"), max 25 characters.
 - hook: a short caption line for TikTok / Reels / X that makes people watch: a reaction, a quote or a question; max 90
   characters, at most one emoji, no hashtags, no swearing.
 
 Reply with JSON only:
 {{"verdict": "pass|reject|trim", "reason": "one short sentence", "trim": [start, end] or null,
-  "moment": "...", "line": "...", "tag": "#...", "hook": "..."}}"""
+  "moment": "...", "line": "...", "tag": "#...", "hook": "...", "names_seen": []}}"""
 
 
 def sheet(mp4, out_jpg, dur=None):
@@ -151,12 +158,28 @@ def parse(text, dur):
     tag = ("#" + re.sub(r"[^A-Za-z0-9_]", "", tag.lstrip("#"))) if tag else ""
     return {"verdict": v, "reason": _clean(d.get("reason"), 200), "trim": trim, "moment": moment or None,
             "line": _clean(d.get("line"), 220) or None, "tag": tag if len(tag) > 2 else None,
-            "hook": _clean(d.get("hook"), 90) or None}
+            "hook": _clean(d.get("hook"), 90) or None,
+            "names_seen": [n for n in (d.get("names_seen") or []) if isinstance(n, str)][:8]}
+
+
+def unseen_names(vz):
+    """Cast names (full, or first/last when unambiguous) written in the copy but not in vz['names_seen']."""
+    text = " ".join(str(vz.get(k) or "") for k in ("moment", "line", "hook", "tag")).lower()
+    seen = " ".join(vz.get("names_seen") or []).lower()
+    bad = []
+    for full in CAST:
+        parts = [full.lower()] + [w.lower() for w in re.split(r"\s+", full) if len(w) > 2]
+        hit = [x for x in parts if re.search(r"(?<![a-z])" + re.escape(x) + r"(?![a-z])", text)]
+        if hit and not any(x in seen for x in parts):
+            bad.append(full)
+    return bad
 
 
 def copy_for(vz, game, brand):
     """Leon's 19 Nov standard from one verdict -> the offer's copy fields (title + YouTube + TikTok + Reels)."""
     if not vz or not vz.get("moment"):
+        return None
+    if unseen_names(vz):   # a cast name in the copy the clip does not show = no copy (fail closed, a human re-copies)
         return None
     tags = game_tags(game)
     moment_tag = [vz["tag"]] if vz.get("tag") else []
@@ -217,7 +240,7 @@ def check(raw_mp4, title, transcript, workdir=None, game=""):
            "title": None, "cost": 0.0, "lane": None}
     try:
         dur = sheet(raw_mp4, jpg)
-        prompt = PROMPT.format(n=N_FRAMES, dur=dur, game=str(game or "unknown").replace('"', "'"),
+        prompt = PROMPT.format(n=N_FRAMES, cast=", ".join(CAST), dur=dur, game=str(game or "unknown").replace('"', "'"),
                                transcript=str(transcript or "")[:1200].replace('"', "'"),
                                title=str(title or "").replace('"', "'"))
         text, cost, lane = _ask(prompt, jpg)

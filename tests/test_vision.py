@@ -82,5 +82,46 @@ class Sheet(unittest.TestCase):
             shutil.rmtree(d, ignore_errors=True)
 
 
+class CopyRules(unittest.TestCase):
+    """Leon's 19 Nov copy rules, coded 23 Nov (all 18 queued rows failed them)."""
+
+    def good(self, **kw):
+        it = {"title": "GTA 6: Boat Flips Into The Marina", "description": "I flipped it.", "copy_std": vision.COPY_STD,
+              "hashtags": ["#GTA6", "#GTAVI", "#BoatFlip", "#Shorts", "#GigglesGhost"],
+              "tiktok_caption": "Wait for it\n\n#gta6 #gtavi #boatflip", "tiktok_hashtags": ["#gta6", "#gtavi", "#boatflip"]}
+        it.update(kw)
+        return it
+
+    def test_clean_item_passes_even_in_gta6_only_mode(self):
+        from clipbot import common
+        with mock.patch.dict(os.environ, {"CLIPBOT_GTA6_ONLY": "1"}):
+            self.assertEqual(common.copy_problems(self.good()), [])
+            self.assertTrue(common.copy_ok(self.good()))
+
+    def test_other_games_old_twitch_line_and_missing_gta6_are_refused(self):
+        from clipbot import common
+        with mock.patch.dict(os.environ, {"CLIPBOT_GTA6_ONLY": "1"}):
+            for bad in (self.good(hashtags=["#GTA6", "#GTAVI", "#gtav"]), self.good(title="GTA 6: Sea of Thieves Boat"),
+                        self.good(description="Live on Twitch: twinkiesghost"), self.good(hashtags=["#Shorts"]),
+                        self.good(title="Boat Flips Into The Marina")):
+                self.assertFalse(common.copy_ok(bad), bad)
+        self.assertFalse(common.copy_ok(self.good(copy_std="")))
+        self.assertFalse(common.copy_ok(self.good(hashtags=["#ARK"])))
+        self.assertTrue(common.copy_ok(self.good(description="a dark park at night")))    # no false hit on substrings
+
+    def test_cast_name_needs_on_screen_evidence_and_is_otherwise_no_copy(self):
+        vz = {"verdict": "pass", "moment": "Lucia Steals A Boat", "line": "I helped her.", "tag": "#BoatTheft", "hook": "Go Lucia", "names_seen": []}
+        self.assertEqual(vision.unseen_names(vz), ["Lucia Caminos"])
+        self.assertIsNone(vision.copy_for(vz, "GTA 6", "GigglesGhost"))
+        self.assertIsNotNone(vision.copy_for({**vz, "names_seen": ["Lucia Caminos"]}, "GTA 6", "GigglesGhost"))
+        self.assertIsNotNone(vision.copy_for({**vz, "moment": "The Girl Steals A Boat", "hook": "Go go go"}, "GTA 6", "GigglesGhost"))
+
+    def test_gta6_copy_carries_gta6_tags(self):
+        c = vision.copy_for({"verdict": "pass", "moment": "Boat Flips", "line": "x", "tag": "#BoatFlip", "hook": None}, "GTA 6", "GigglesGhost")
+        self.assertTrue(c["title"].startswith("GTA 6: "))
+        self.assertEqual(c["hashtags"][:2], ["#GTA6", "#GTAVI"])
+        self.assertEqual(c["tiktok_hashtags"][:2], ["#gta6", "#gtavi"])
+
+
 if __name__ == "__main__":
     unittest.main()

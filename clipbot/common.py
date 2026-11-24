@@ -491,9 +491,37 @@ def worker(path, payload=None, method=None):
 PACE_H = 2.0
 
 
+_OTHER_GAME = re.compile(r"(?i)(?<![A-Za-z0-9])#?(gtav|gta5|gtaonline|seaofthieves|sea of thieves|ark|ark survival\w*|cyberpunk\w*|"
+                         r"watch ?dogs\w*|assassin'?s ?creed\w*|acrogue|bg3|baldur'?s ?gate\w*|minecraft|fortnite|warzone|valorant|"
+                         r"farcry\w*)(?![A-Za-z0-9])")
+_OLD_LIVE = re.compile(r"(?i)live on twitch|twinkiesghost|twitch\.tv")
+
+
+def copy_problems(it):
+    """Leon's 19 Nov copy rules, checked on the FINISHED item (boss 23 Nov: 18 queued rows all failed them). [] = clean.
+    Never on an item that has no copy_std: that alone is a refusal."""
+    out = []
+    texts = [str(it.get(k) or "") for k in ("title", "description", "tiktok_caption", "ig_caption", "tiktok_hook", "ig_hook")]
+    tags = [str(t) for k in ("hashtags", "tiktok_hashtags", "ig_hashtags") for t in (it.get(k) or [])]
+    blob = " ".join(texts + tags)
+    if _OTHER_GAME.search(blob):
+        out.append("another game's name or tag")
+    if _OLD_LIVE.search(blob):
+        out.append("old Twitch line or handle")
+    if os.environ.get("CLIPBOT_GTA6_ONLY") == "1":   # set in the posting workflows: every caption says GTA 6
+        for k in ("hashtags", "tiktok_hashtags", "ig_hashtags"):   # each platform's own list, when it has one
+            if it.get(k) and not {"#gta6", "#gtavi"} <= {str(t).lower() for t in it[k]}:
+                out.append(f"{k}: missing #GTA6 #GTAVI")
+        if not any(it.get(k) for k in ("hashtags", "tiktok_hashtags", "ig_hashtags")):
+            out.append("no hashtags")
+        if not re.match(r"(?i)\s*GTA ?(6|VI)(?![A-Za-z0-9])", str(it.get("title") or "")):
+            out.append("title does not say GTA 6")
+    return out
+
+
 def copy_ok(it):
     from .vision import COPY_STD
-    return str(it.get("copy_std") or "") == COPY_STD
+    return str(it.get("copy_std") or "") == COPY_STD and not copy_problems(it)
 
 
 def pace_ok(lane, platform_last=None, now=None):

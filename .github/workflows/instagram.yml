@@ -25,6 +25,7 @@ jobs:
       CLIPBOT_ZIP_KEY: ${{ secrets.CLIPBOT_ZIP_KEY }}   # clip zips + debug files are encrypted (public repo)
       CLIPBOT_TOKEN: ${{ secrets.CLIPBOT_TOKEN }}
       CLIPBOT_ID: ${{ secrets.CLIPBOT_ID }}   # channel identity (names live only in this secret: the repo is public)
+      CLIPBOT_GTA6_ONLY: "1"   # boss 23 Nov: posts are refused unless every caption says GTA 6 (#GTA6 #GTAVI) and no other game/old Twitch line
       KICK_SLUG: ${{ secrets.KICK_SLUG }}   # Kick: the live address in Leon's copy (common.live_url)
       KICK_SLUG_PUBLIC: ${{ vars.KICK_SLUG_PUBLIC }}   # 1 = the address may go in public copy
       CLIPBOT_REALNAME: ${{ secrets.CLIPBOT_REALNAME }}   # real-name guard terms (clipbot/realname.py): never in this public repo
