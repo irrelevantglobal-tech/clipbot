@@ -314,6 +314,10 @@ def marathon_mode():
     by its time since start. Any error -> False (the normal 2 a day). Owner only: everyone else is always 2 a day."""
     if WHO != "leon":
         return False
+    # 25 Nov (Leon: "we need them more spread out"): his NORMAL streams run 10 h+, so the automatic marathon pace kept
+    # TikTok booking Shorts one an HOUR. Marathon pace is now opt-in only: repo variable CLIPBOT_MARATHON=1.
+    if os.environ.get("CLIPBOT_MARATHON") != "1":
+        return False
     try:
         from polished import source
         vids = source.kick_videos()[:5]

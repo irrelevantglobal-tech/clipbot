@@ -24,9 +24,14 @@ def kick(start_ago_h, dur_h=0.0, live=False):
 
 
 class KickMarathon(unittest.TestCase):
-    def check(self, vids, who="leon"):
-        with mock.patch.object(c, "WHO", who), mock.patch.object(source, "kick_videos", return_value=vids) as kv:
+    def check(self, vids, who="leon", on="1"):
+        with mock.patch.object(c, "WHO", who), mock.patch.object(source, "kick_videos", return_value=vids) as kv,              mock.patch.dict(os.environ, {"CLIPBOT_MARATHON": on}):
             return c.marathon_mode(), kv.called
+
+    def test_off_unless_switched_on(self):
+        """25 Nov: his normal streams are 10 h+; the marathon pace (hourly Shorts) is opt-in via CLIPBOT_MARATHON=1."""
+        self.assertEqual(self.check([kick(12, 11)], on="")[0], False)
+        self.assertEqual(self.check([kick(12, 11)], on="1")[0], True)
 
     def test_before_the_marathon_is_false(self):
         self.assertEqual(self.check([kick(30, 3), kick(60, 4)])[0], False)
