@@ -550,9 +550,9 @@ def pace_ok(lane, platform_last=None, now=None):
     if int(rec_today or 0) >= DAILY_CAP:
         print(f"{lane}: {rec_today} posts today already (cap {DAILY_CAP}); the next one waits for tomorrow")
         return False
-    for other in ("ig", "x", "tt"):                       # stagger: a nicety, so an unreadable answer never blocks a post
-        if other == lane:
-            continue
+    # stagger: a nicety, so an unreadable answer never blocks a post. 25 Nov: ONLY between Reels and X. TikTok's lane runs
+    # hourly at :40 and refreshes its record, so "wait for TikTok" kept IG/X (hourly at :06) waiting forever: 0 posts.
+    for other in {"ig": ("x",), "x": ("ig",)}.get(lane, ()):
         try:
             o = worker(f"/clipbot/lastpost?lane={other}").get("at")
             if o and now - datetime.fromisoformat(str(o).replace("Z", "+00:00")) < timedelta(minutes=STAGGER_MIN):

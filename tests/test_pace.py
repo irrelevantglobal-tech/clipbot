@@ -38,9 +38,9 @@ class Pace(unittest.TestCase):
             self.assertTrue(common.pace_ok("ig"))
 
     def test_other_platform_just_posted_makes_this_lane_wait(self):
-        with mock.patch.object(common, "worker", fake(iso(5), others={"tt": iso(0.3)})):
+        with mock.patch.object(common, "worker", fake(iso(5), others={"x": iso(0.3)})):
             self.assertFalse(common.pace_ok("ig"))
-        with mock.patch.object(common, "worker", fake(iso(5), others={"tt": iso(1.5)})):
+        with mock.patch.object(common, "worker", fake(iso(5), others={"x": iso(1.5)})):
             self.assertTrue(common.pace_ok("ig"))
 
     def test_unreadable_own_record_posts_nothing(self):
@@ -81,3 +81,19 @@ class Copy24Nov(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TikTokNeverBlocksReelsOrX(unittest.TestCase):
+    """25 Nov: TikTok refreshes its record every hour at :40, IG/X run at :06 -> a TikTok stagger starved them (0 posts)."""
+    def test_recent_tiktok_does_not_block_ig_or_x(self):
+        from datetime import datetime, timedelta
+        from unittest import mock
+        from clipbot import common
+        now = datetime(2026, 11, 25, 11, 6, tzinfo=common.UTC)
+        recs = {"ig": {"at": None, "today": 0}, "x": {"at": None, "today": 0},
+                "tt": {"at": (now - timedelta(minutes=10)).isoformat().replace("+00:00", "Z"), "today": 2}}
+        with mock.patch.object(common, "worker", lambda path, *a, **k: recs[path.rsplit("=", 1)[-1]]):
+            self.assertTrue(common.pace_ok("ig", now=now))
+            self.assertTrue(common.pace_ok("x", now=now))
+            recs["ig"]["at"] = (now - timedelta(minutes=10)).isoformat().replace("+00:00", "Z")
+            self.assertFalse(common.pace_ok("x", now=now))   # Reels <-> X still staggered
