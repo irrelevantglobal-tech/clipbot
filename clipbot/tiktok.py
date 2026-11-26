@@ -203,6 +203,36 @@ def schedule_one(page, path, caption, epoch, dry):
     return str(r["single_post_resp_list"][0]["item_id"]), state
 
 
+def post_stats(posts):
+    """26 Nov (Leon: "getting them to perform the best they can"): a compact snapshot of TikTok's own numbers per post,
+    for Studio's performance tracker (GET /clipbot/stats?lane=tt). Fail-soft: a stats problem never stops posting."""
+    def num(x, *keys):
+        for k in keys:
+            v = x.get(k)
+            if v is None and isinstance(x.get("statistics"), dict):
+                v = x["statistics"].get(k)
+            if v is None and isinstance(x.get("stats"), dict):
+                v = x["stats"].get(k)
+            if v is not None:
+                try:
+                    return int(v)
+                except (TypeError, ValueError):
+                    pass
+        return None
+    out = []
+    for x in posts[:120]:
+        out.append({"id": str(x.get("item_id") or x.get("id") or ""), "desc": str(x.get("desc") or "")[:150],
+                    "created": num(x, "create_time"), "scheduled": num(x, "schedule_time"),
+                    "views": num(x, "play_count", "playCount", "view_count"), "likes": num(x, "digg_count", "like_count", "diggCount"),
+                    "comments": num(x, "comment_count", "commentCount"), "shares": num(x, "share_count", "shareCount"),
+                    "keys": sorted(x.keys())[:40] if not out else None})
+    try:
+        common.worker("/clipbot/stats?lane=tt", {"items": out})
+        print(f"stats: {len(out)} TikTok post(s) sent to the tracker")
+    except Exception as e:   # noqa: BLE001
+        print(f"stats: not sent ({str(e)[:120]})")
+
+
 def main():
     dry = os.environ.get("TT_DRY") == "1"
     if not os.environ.get("TIKTOK_STATE"):
@@ -229,6 +259,7 @@ def main():
         page = ctx.new_page()
         try:
             posts = studio_posts(page)
+            post_stats(posts)
         except LoginNeeded as e:
             page.screenshot(path=os.path.join(work, "login.png"))
             common.worker("/clipbot/failed", {"id": "TikTok", "error": f"{e}. Nothing was posted. Log in again on your laptop: "
